@@ -9,3 +9,4 @@ docker-compose.yaml
 logs
 
 .env.local
+.vercel

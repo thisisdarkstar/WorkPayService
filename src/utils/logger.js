@@ -3,10 +3,11 @@ import chalk from "chalk";
 import fs from "fs";
 import path from "path";
 
-const logsDir = path.resolve("logs");
-if (!fs.existsSync(logsDir)) {
-  fs.mkdirSync(logsDir, { recursive: true });
-}
+const isServerless = Boolean(
+  process.env.VERCEL ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.LAMBDA_TASK_ROOT
+);
 
 const colorizeJSON = (obj) => {
   const json = JSON.stringify(obj, null, 2);
@@ -54,10 +55,17 @@ const fileFormat = winston.format.combine(
   winston.format.printf((info) => JSON.stringify(buildLogEntry(info)))
 );
 
-const logger = winston.createLogger({
-  level: "debug",
-  transports: [
-    new winston.transports.Console({ format: consoleFormat }),
+const transports = [
+  new winston.transports.Console({ format: consoleFormat }),
+];
+
+if (!isServerless) {
+  const logsDir = path.resolve("logs");
+  if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+  }
+
+  transports.push(
     new winston.transports.File({
       filename: path.join(logsDir, "combined.log"),
       format: fileFormat,
@@ -70,8 +78,13 @@ const logger = winston.createLogger({
       format: fileFormat,
       maxsize: 10 * 1024 * 1024,
       maxFiles: 5,
-    }),
-  ],
+    })
+  );
+}
+
+const logger = winston.createLogger({
+  level: "debug",
+  transports,
 });
 
 export default logger;
