@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/attendances/cron-auto-finalize",
-      "schedule": "*/10 * * * *"
+      "schedule": "0 18 * * *"
     }
   ],
   "rewrites": [
