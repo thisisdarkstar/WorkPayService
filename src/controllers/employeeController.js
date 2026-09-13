@@ -1,4 +1,5 @@
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import moment from "moment-timezone";
 
@@ -171,10 +172,13 @@ export const createEmployee = async (req, res) => {
   }
 };
 
-// ✅ Get all employees (excludes password hash)
+// ✅ Get all employees (excludes password hash, scoped by adminId)
 export const getEmployees = async (req, res) => {
   try {
+    const adminId = req.admin?.id;
+    const where = adminId ? { adminId: Number(adminId) } : {};
     const employees = await req.db.employee.findMany({
+      where,
       select: {
         id: true,
         name: true,
@@ -346,32 +350,64 @@ export const resetPasswordWithJWT = async (req, res) => {
   }
 };
 
-//  Reset password with Phone (Firebase auth already done on frontend)
-export const resetPasswordWithPhone = async (req, res) => {
+// ✅ Admin Reset Employee Password (Generates secure random password & returns to Admin)
+export const adminResetEmployeePassword = async (req, res) => {
   try {
-    const { phone, newPassword } = req.body;
+    const adminId = req.admin?.id;
+    const { id } = req.params;
 
-    if (!phone || !newPassword) {
-      return res.status(400).json({ error: "Phone and new password required" });
+    if (!id) {
+      return res.status(400).json({ error: "Employee ID is required" });
     }
 
-    const employee = await req.db.employee.findUnique({ where: { phone } });
+    // Verify employee belongs to this admin's organization
+    const employee = await req.db.employee.findFirst({
+      where: {
+        id: Number(id),
+        adminId: Number(adminId),
+      },
+    });
+
     if (!employee) {
-      return res.status(404).json({ error: "Employee not found" });
+      return res.status(404).json({ error: "Employee not found in your organization" });
     }
 
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    // Generate secure, easy-to-read temporary password (8 characters)
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    const bytes = crypto.randomBytes(8);
+    let temporaryPassword = "";
+    for (let i = 0; i < 8; i++) {
+      temporaryPassword += chars[bytes[i] % chars.length];
+    }
+
+    const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
 
     await req.db.employee.update({
-      where: { phone },
+      where: { id: employee.id },
       data: { password: hashedPassword },
     });
 
-    res.json({ message: "Password reset successfully" });
+    res.json({
+      message: `Password reset successfully for ${employee.name}`,
+      temporaryPassword,
+      employee: {
+        id: employee.id,
+        name: employee.name,
+        phone: employee.phone,
+        email: employee.email,
+      },
+    });
   } catch (error) {
-    console.error("Reset Password with Phone error:", error);
-    res.status(500).json({ error: "Something went wrong" });
+    console.error("Admin Reset Employee Password error:", error);
+    res.status(500).json({ error: "Failed to reset employee password" });
   }
+};
+
+// Disabled unauthenticated phone reset for security (admins now reset employee passwords)
+export const resetPasswordWithPhone = async (req, res) => {
+  return res.status(403).json({
+    error: "Direct password reset by phone is disabled for security. Please request your administrator to reset your password.",
+  });
 };
 
 //  Get Employee by Phone (check if exists)

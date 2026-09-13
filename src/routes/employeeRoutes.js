@@ -8,6 +8,7 @@ import {
   loginEmployee,
   resetPasswordWithPhone,
   resetPasswordWithJWT,
+  adminResetEmployeePassword,
   getEmployeeByPhone,
   getEmployeeDashboard,
   updateEmployeeStatus,
@@ -23,6 +24,7 @@ router.get("/get/:id", adminAuth, getEmployeeById);      // Get single employee
 router.put("/update/:id", adminAuth, updateEmployee);       // Update employee
 router.put("/update-status/:id", adminAuth, updateEmployeeStatus); // Update employee status
 router.delete("/delete/:id", adminAuth, deleteEmployee);
+router.post("/admin-reset-password/:id", adminAuth, adminResetEmployeePassword); // Admin reset employee password
 
 //login routes
 router.post("/login", loginEmployee);

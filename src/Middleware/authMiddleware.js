@@ -57,6 +57,10 @@ export const employeeAuth = async (req, res, next) => {
       return res.status(401).json({ error: "Employee not found" });
     }
 
+    if (employee.status !== "ACTIVE") {
+      return res.status(403).json({ error: "Account is inactive. Please contact your administrator." });
+    }
+
     req.employee = employee; // attach DB record
     next();
   } catch (error) {
@@ -87,6 +91,9 @@ export const adminOrEmployeeAuth = async (req, res, next) => {
       user = await db.admin.findUnique({ where: { id: decoded.id } });
     } else if (decoded.role === "employee") {
       user = await db.employee.findUnique({ where: { id: decoded.id } });
+      if (user && user.status !== "ACTIVE") {
+        return res.status(403).json({ error: "Account is inactive. Please contact your administrator." });
+      }
     }
 
     if (!user) {
