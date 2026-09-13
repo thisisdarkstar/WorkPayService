@@ -1,4 +1,5 @@
 import moment from "moment-timezone";
+import { finalizeOfficeAttendance, checkAndRunAutoFinalize } from "../services/autoFinalizeService.js";
 
 // Convert UTC date to IST string for response
 const toISTString = (utcDate) =>
@@ -78,6 +79,15 @@ export const handleAttendance = async (req, res) => {
     console.log("DEBUG - Office checkin IST:", toISTString(officeCheckinUTC));
     console.log("DEBUG - Office checkout IST:", toISTString(officeCheckoutUTC));
 
+    // Check if office attendance is already finalized for today in IST
+    if (office.lastFinalized) {
+      const lastFinalizedIST = moment.tz(office.lastFinalized, "Asia/Kolkata").format("YYYY-MM-DD");
+      const todayDateIST = moment.tz("Asia/Kolkata").format("YYYY-MM-DD");
+      if (lastFinalizedIST === todayDateIST) {
+        return res.status(400).json({ message: "Attendance for today has already been finalized by office administration." });
+      }
+    }
+
     // Fetch today's attendance
     let attendance = await req.db.attendance.findFirst({
       where: {
@@ -87,8 +97,15 @@ export const handleAttendance = async (req, res) => {
     });
 
     if (type === "checkin") {
-      if (attendance)
+      if (attendance) {
+        if (attendance.status === "ABSENT") {
+          return res.status(400).json({ message: "Attendance for today was already marked as absent." });
+        }
+        if (attendance.status === "LEAVE") {
+          return res.status(400).json({ message: "You are on approved leave for today." });
+        }
         return res.status(400).json({ message: `Employee already checked in today` });
+      }
 
       // Calculate late threshold (30 minutes after office checkin)
       const lateThresholdUTC = new Date(officeCheckinUTC.getTime() + 30 * 60 * 1000);
@@ -116,9 +133,12 @@ export const handleAttendance = async (req, res) => {
     }
 
     if (type === "checkout") {
-      if (!attendance) return res.status(400).json({ message: "No check-in found for today" });
-      if (attendance.checkOutTime)
+      if (!attendance || !attendance.checkInTime) {
+        return res.status(400).json({ message: "No active check-in found for today" });
+      }
+      if (attendance.checkOutTime) {
         return res.status(400).json({ message: "Employee already checked out today", attendance });
+      }
 
       const employee = await req.db.employee.findUnique({
         where: { id: Number(employeeId) },
@@ -260,6 +280,9 @@ export const getEmployeeAttendanceByMonth = async (req, res) => {
 // ✅ Dashboard Attendance API (IST-aware with Office filtering and "all" support)
 export const getTodayAttendanceDashboard = async (req, res) => {
   try {
+    // Opportunistically run auto-finalize check in background if any office deadline passed
+    checkAndRunAutoFinalize(req.db).catch(err => console.error('[AutoFinalize Error]', err));
+
     let targetOfficeId;
     let isAllOffices = false;
     const { officeId } = req.params;
@@ -503,349 +526,58 @@ export const getEmployeeAttendanceByMonthInAdmin = async (req, res) => {
 
 
 
-// Main controller: Mark attendance for absent employees (Office-specific)
+// Main controller: Mark attendance for absent employees / Finalize attendance (Office-specific)
+// - Clocks out employees who checked in but haven't clocked out yet
+// - Marks unclocked employees as ABSENT (with salary deduction) or LEAVE
+// - Updates office.lastFinalized
 export const markAttendanceForAbsentEmployees = async (req, res) => {
   try {
-    // Get current time and today's IST date range in UTC
-    const nowUTC = getCurrentUTC();
-    const { startUTC: todayStartUTC, endUTC: todayEndUTC } = getISTRangeUTC(nowUTC);
-    const targetDateUTC = todayStartUTC; // Use today's start as target date
-    
-    // Get today's IST date for display
-    const todayIST = moment.utc(nowUTC).tz("Asia/Kolkata").format("YYYY-MM-DD");
-    
-    console.log("DEBUG - Processing attendance for today's IST date:", todayIST);
-
-    // ====== NEW: Check if today is a holiday ======
-    const todayStartISTMoment = moment.tz(todayIST + " 00:00:00", "Asia/Kolkata");
-    const todayEndISTMoment = moment.tz(todayIST + " 23:59:59", "Asia/Kolkata");
-    
-    const todayStartUTCForHoliday = todayStartISTMoment.utc().toDate();
-    const todayEndUTCForHoliday = todayEndISTMoment.utc().toDate();
-
-    const holidayToday = await req.db.holiday.findFirst({
-      where: {
-        date: {
-          gte: todayStartUTCForHoliday,
-          lte: todayEndUTCForHoliday,
-        },
-      },
-    });
-
-    if (holidayToday) {
-      return res.status(400).json({
-        error: "Cannot finalize attendance on a holiday",
-        message: `Today (${todayIST}) is a holiday: ${holidayToday.description}`,
-        date: todayIST,
-        holiday: {
-          description: holidayToday.description,
-          date: moment.utc(holidayToday.date).tz("Asia/Kolkata").format("YYYY-MM-DD")
-        }
-      });
-    }
-    // ====== END HOLIDAY CHECK ======
-
-    // 1. Determine target office (similar to dashboard controller)
     let targetOfficeId;
     const { officeId } = req.params;
-    
-    console.log("DEBUG - Received officeId param:", officeId);
-    
+
     if (officeId !== undefined) {
-      // Use the provided officeId
       targetOfficeId = Number(officeId);
-      
-      // Verify office exists
       const officeExists = await req.db.office.findUnique({
         where: { id: targetOfficeId },
         select: { id: true, name: true }
       });
-      
       if (!officeExists) {
         return res.status(404).json({ error: "Office not found" });
       }
-      
-      console.log("DEBUG - Processing for office:", officeExists.name);
     } else {
-      // Get the first office if no officeId provided
       const firstOffice = await req.db.office.findFirst({
         orderBy: { id: 'asc' },
         select: { id: true, name: true }
       });
-      
       if (!firstOffice) {
         return res.status(404).json({ error: "No offices found" });
       }
-      
       targetOfficeId = firstOffice.id;
-      console.log("DEBUG - Processing for default office:", firstOffice.name);
     }
 
-    // 2. Get all ACTIVE employees for the target office
-    const officeEmployees = await req.db.employee.findMany({
-      where: { 
-        officeId: targetOfficeId,
-        status: 'ACTIVE'
-      },
-      select: { id: true, name: true }
-    });
+    const result = await finalizeOfficeAttendance(req.db, targetOfficeId);
 
-    const employeeIds = officeEmployees.map(emp => emp.id);
-    const totalActiveEmployees = officeEmployees.length;
-    
-    console.log("DEBUG - Total ACTIVE employees in office:", totalActiveEmployees);
-
-    if (totalActiveEmployees === 0) {
-      return res.json({
-        message: `No active employees found in the selected office for today (${todayIST})`,
-        date: todayIST,
-        officeId: targetOfficeId,
-        processedEmployees: []
-      });
-    }
-
-    // ====== NEW: Get current attendance stats and validate ======
-    const attendanceStats = await req.db.attendance.groupBy({
-      by: ["status"],
-      where: {
-        empId: { in: employeeIds },
-        date: {
-          gte: todayStartUTC,
-          lt: todayEndUTC,
-        },
-      },
-      _count: {
-        status: true,
-      },
-    });
-
-    // Calculate totals (excluding HOLIDAY since holidays prevent finalization)
-    const stats = {
-      PRESENT: 0,
-      ABSENT: 0,
-      LATE: 0,
-      LEAVE: 0,
-      HOLIDAY: 0
-    };
-
-    attendanceStats.forEach(stat => {
-      stats[stat.status] = stat._count.status;
-    });
-
-    const totalRecorded = stats.PRESENT + stats.ABSENT + stats.LATE + stats.LEAVE;
-
-    console.log("DEBUG - Current attendance stats:", stats);
-    console.log("DEBUG - Total recorded:", totalRecorded);
-    console.log("DEBUG - Total active employees:", totalActiveEmployees);
-
-    // Check if attendance is already complete
-    if (totalRecorded === totalActiveEmployees) {
+    if (result.skipped) {
       return res.status(400).json({
-        error: "Attendance already finalized",
-        message: `All ${totalActiveEmployees} active employees already have attendance records for today (${todayIST})`,
-        date: todayIST,
-        officeId: targetOfficeId,
-        stats: {
-          totalActiveEmployees,
-          totalRecorded,
-          breakdown: stats
-        },
-        alreadyFinalized: true
+        error: result.reason,
+        message: result.reason,
+        officeId: targetOfficeId
       });
     }
-
-    // Check if there are employees missing attendance
-    const missingCount = totalActiveEmployees - totalRecorded;
-    console.log("DEBUG - Missing attendance records:", missingCount);
-    // ====== END VALIDATION ======
-    
-    console.log("DEBUG - Date range UTC:");
-    console.log("DEBUG - Start UTC:", todayStartUTC);
-    console.log("DEBUG - End UTC:", todayEndUTC);
-    console.log("DEBUG - Target date UTC:", targetDateUTC);
-
-    // Get office employees who already have attendance records for today
-    const existingAttendance = await req.db.attendance.findMany({
-      where: {
-        empId: { in: employeeIds },
-        date: {
-          gte: todayStartUTC,
-          lt: todayEndUTC
-        }
-      },
-      select: { empId: true }
-    });
-
-    const employeesWithAttendance = new Set(existingAttendance.map(att => att.empId));
-    console.log("DEBUG - Office employees with existing attendance:", employeesWithAttendance.size);
-
-    // Find office employees without attendance records
-    const employeesWithoutAttendance = officeEmployees.filter(emp => 
-      !employeesWithAttendance.has(emp.id)
-    );
-
-    console.log("DEBUG - Office employees without attendance:", employeesWithoutAttendance.length);
-
-    if (employeesWithoutAttendance.length === 0) {
-      return res.json({
-        message: `All employees in this office already have attendance records for today (${todayIST})`,
-        date: todayIST,
-        officeId: targetOfficeId,
-        processedEmployees: []
-      });
-    }
-
-    // Process each employee without attendance using transaction for safety
-    const processedEmployees = [];
-    
-    // Use a transaction to ensure data consistency
-    const result = await req.db.$transaction(async (tx) => {
-      const batchResults = [];
-      
-      for (const employee of employeesWithoutAttendance) {
-        // Double-check this employee doesn't have a record (race condition protection)
-        const existingRecord = await tx.attendance.findFirst({
-          where: {
-            empId: employee.id,
-            date: { gte: todayStartUTC, lt: todayEndUTC }
-          }
-        });
-
-        if (existingRecord) {
-          console.log(`DEBUG - Skipping ${employee.name}, record already exists`);
-          continue;
-        }
-
-        let status = "ABSENT";
-        let reason = "No check-in recorded";
-
-        // Check if employee has approved leave for this date
-        const hasLeave = await hasApprovedLeaveForDate(tx, employee.id, targetDateUTC);
-        
-        if (hasLeave) {
-          status = "LEAVE";
-          reason = "Approved leave";
-        }
-
-        let employeeData = null;
-
-        try {
-          // Create attendance record
-          const attendanceRecord = await tx.attendance.create({
-            data: {
-              empId: employee.id,
-              date: todayStartUTC,
-              checkInTime: null,
-              checkOutTime: null,
-              overTime: 0,
-              status: status
-            }
-          });
-
-          // Create deduction transaction for ABSENT status
-          if (status === "ABSENT") {
-            // Get employee's base salary
-            employeeData = await tx.employee.findUnique({
-              where: { id: employee.id },
-              select: { baseSalary: true, name: true }
-            });
-
-            if (employeeData) {
-              // Calculate total days in current month
-              const currentMonth = moment.utc(todayStartUTC).tz("Asia/Kolkata");
-              const totalDaysInMonth = currentMonth.daysInMonth();
-              
-              // Calculate per-day deduction amount
-              const perDayAmount = Math.round(employeeData.baseSalary / totalDaysInMonth);
-              
-              // Create deduction transaction
-              await tx.transaction.create({
-                data: {
-                  empId: employee.id,
-                  amount: perDayAmount,
-                  payType: "DEDUCTION",
-                  description: `Absent deduction for ${currentMonth.format("YYYY-MM-DD")} (₹${perDayAmount}/${totalDaysInMonth} days)`,
-                  date: todayStartUTC
-                }
-              });
-
-              console.log(`DEBUG - Created deduction for ${employee.name}: ₹${perDayAmount} for absent on ${currentMonth.format("YYYY-MM-DD")}`);
-            }
-          }
-
-          batchResults.push({
-            employeeId: employee.id,
-            employeeName: employee.name,
-            status: status,
-            reason: reason,
-            attendanceId: attendanceRecord.id,
-            deductionAmount: status === "ABSENT" && employeeData ? Math.round(employeeData.baseSalary / moment.utc(todayStartUTC).tz("Asia/Kolkata").daysInMonth()) : 0
-          });
-
-          console.log(`DEBUG - Processed ${employee.name} (ID: ${employee.id}): ${status}`);
-        } catch (createError) {
-          // Handle potential unique constraint violations gracefully
-          if (createError.code === 'P2002') {
-            console.log(`DEBUG - Duplicate prevented for ${employee.name}`);
-            continue;
-          }
-          throw createError;
-        }
-      }
-      
-      return batchResults;
-    });
-
-    processedEmployees.push(...result);
-
-    // Summary with deduction details
-    const summary = processedEmployees.reduce((acc, emp) => {
-      acc[emp.status] = (acc[emp.status] || 0) + 1;
-      if (emp.status === "ABSENT") {
-        acc.totalDeductions = (acc.totalDeductions || 0) + emp.deductionAmount;
-        acc.deductionCount = (acc.deductionCount || 0) + 1;
-      }
-      return acc;
-    }, {});
-
-    console.log("DEBUG - Processing summary:", summary);
-
-    // Get office details for response
-    const officeDetails = await req.db.office.findUnique({
-      where: { id: targetOfficeId },
-      select: { id: true, name: true }
-    });
-
-    // ====== NEW: Get updated stats after finalization ======
-    const updatedStats = {
-      PRESENT: stats.PRESENT,
-      ABSENT: stats.ABSENT + (summary.ABSENT || 0),
-      LATE: stats.LATE,
-      LEAVE: stats.LEAVE + (summary.LEAVE || 0),
-      HOLIDAY: stats.HOLIDAY
-    };
-    const newTotalRecorded = updatedStats.PRESENT + updatedStats.ABSENT + updatedStats.LATE + updatedStats.LEAVE;
-    // ====== END UPDATED STATS ======
 
     res.json({
-      message: `Successfully processed attendance for ${employeesWithoutAttendance.length} employees in ${officeDetails.name} for today (${todayIST})`,
-      date: todayIST,
-      office: officeDetails,
-      totalProcessed: employeesWithoutAttendance.length,
-      summary: summary,
-      processedEmployees: processedEmployees,
-      attendanceComplete: newTotalRecorded === totalActiveEmployees,
-      finalStats: {
-        totalActiveEmployees,
-        totalRecorded: newTotalRecorded,
-        breakdown: updatedStats
-      }
+      message: result.message,
+      date: result.date,
+      officeId: result.officeId,
+      clockedOutCount: result.clockedOutCount,
+      absentCount: result.absentCount,
+      leaveCount: result.leaveCount,
+      attendanceComplete: true
     });
-
   } catch (error) {
-    console.error("Error marking attendance for absent employees:", error);
+    console.error("Error finalizing attendance:", error);
     res.status(500).json({ 
-      error: "Failed to mark attendance for absent employees", 
+      error: "Failed to finalize attendance", 
       details: error.message 
     });
   }
@@ -856,45 +588,47 @@ export const markAttendanceForAbsentEmployees = async (req, res) => {
 // Check if bulk attendance marking is already done for today (Office-specific for UI button state)
 export const checkBulkAttendanceStatus = async (req, res) => {
   try {
-    // Get current time and today's IST date range in UTC
     const nowUTC = getCurrentUTC();
     const { startUTC: todayStartUTC, endUTC: todayEndUTC } = getISTRangeUTC(nowUTC);
     const todayIST = moment.utc(nowUTC).tz("Asia/Kolkata").format("YYYY-MM-DD");
 
-    // 1. Determine target office (same logic as other controllers)
     let targetOfficeId;
     const { officeId } = req.params;
     
-    console.log("DEBUG - Checking bulk status for officeId:", officeId);
-    
     if (officeId !== undefined) {
-      // Use the provided officeId
       targetOfficeId = Number(officeId);
-      
-      // Verify office exists
       const officeExists = await req.db.office.findUnique({
         where: { id: targetOfficeId },
         select: { id: true, name: true }
       });
-      
       if (!officeExists) {
         return res.status(404).json({ error: "Office not found" });
       }
     } else {
-      // Get the first office if no officeId provided
       const firstOffice = await req.db.office.findFirst({
         orderBy: { id: 'asc' },
         select: { id: true, name: true }
       });
-      
       if (!firstOffice) {
         return res.status(404).json({ error: "No offices found" });
       }
-      
       targetOfficeId = firstOffice.id;
     }
 
-    // 2. Get all active employees for the target office
+    // Get office details
+    const officeDetails = await req.db.office.findUnique({
+      where: { id: targetOfficeId },
+      select: { 
+        id: true, 
+        name: true,
+        checkin: true,
+        checkout: true,
+        autoFinalizeTime: true,
+        lastFinalized: true
+      }
+    });
+
+    // Get all active employees for the target office
     const officeEmployees = await req.db.employee.findMany({
       where: { 
         officeId: targetOfficeId,
@@ -906,20 +640,29 @@ export const checkBulkAttendanceStatus = async (req, res) => {
     const employeeIds = officeEmployees.map(emp => emp.id);
     const totalEmployeesInOffice = employeeIds.length;
 
+    // Check if attendance is finalized for today (based on lastFinalized date in IST)
+    let isCompleted = false;
+    if (officeDetails?.lastFinalized) {
+      const lastFinalizedIST = moment.utc(officeDetails.lastFinalized).tz("Asia/Kolkata").format("YYYY-MM-DD");
+      if (lastFinalizedIST === todayIST) {
+        isCompleted = true;
+      }
+    }
+
     if (employeeIds.length === 0) {
       return res.json({
         date: todayIST,
-        officeId: targetOfficeId,
-        isBulkMarkingCompleted: true, // No employees to process
-        bulkRecordsCount: 0,
+        office: officeDetails,
+        isBulkMarkingCompleted: isCompleted,
         totalEmployees: 0,
         totalAttendanceToday: 0,
         remainingEmployees: 0,
+        pendingClockouts: 0,
         message: "No active employees in this office"
       });
     }
 
-    // 3. Get attendance stats (excluding HOLIDAY status from total)
+    // Attendance stats
     const attendanceStats = await req.db.attendance.groupBy({
       by: ["status"],
       where: {
@@ -934,7 +677,6 @@ export const checkBulkAttendanceStatus = async (req, res) => {
       },
     });
 
-    // Calculate totals (excluding HOLIDAY since holidays prevent finalization)
     const stats = {
       PRESENT: 0,
       ABSENT: 0,
@@ -948,45 +690,59 @@ export const checkBulkAttendanceStatus = async (req, res) => {
     });
 
     const totalRecorded = stats.PRESENT + stats.ABSENT + stats.LATE + stats.LEAVE;
-    const totalAttendanceToday = totalRecorded; // Total attendance count for active employees
     const remainingEmployees = totalEmployeesInOffice - totalRecorded;
 
-    // Check if attendance is complete: totalRecorded === totalActiveEmployees
-    const isCompleted = totalRecorded === totalEmployeesInOffice;
-
-    // Count bulk records for additional context
-    const existingBulkRecords = await req.db.attendance.count({
+    // Count pending clockouts
+    const pendingClockouts = await req.db.attendance.count({
       where: {
         empId: { in: employeeIds },
         date: { gte: todayStartUTC, lt: todayEndUTC },
-        checkInTime: null,
-        status: { in: ["ABSENT", "LEAVE"] }
+        checkInTime: { not: null },
+        checkOutTime: null
       }
     });
 
-    // 5. Get office details for response
-    const officeDetails = await req.db.office.findUnique({
-      where: { id: targetOfficeId },
-      select: { id: true, name: true }
-    });
+    const autoFinalizeDisplay = officeDetails.autoFinalizeTime
+      ? moment.utc(officeDetails.autoFinalizeTime).tz("Asia/Kolkata").format("hh:mm A")
+      : moment.utc(officeDetails.checkout).tz("Asia/Kolkata").add(3, "hours").format("hh:mm A") + " (Shift End + 3h)";
 
     res.json({
       date: todayIST,
       office: officeDetails,
       isBulkMarkingCompleted: isCompleted,
-      bulkRecordsCount: existingBulkRecords,
       totalEmployees: totalEmployeesInOffice,
-      totalAttendanceToday: totalAttendanceToday,
+      totalAttendanceToday: totalRecorded,
       remainingEmployees: remainingEmployees,
+      pendingClockouts: pendingClockouts,
+      autoFinalizeTime: officeDetails.autoFinalizeTime,
+      autoFinalizeDisplay: autoFinalizeDisplay,
       message: isCompleted 
-        ? `Bulk marking already completed for ${officeDetails.name}`
-        : `${remainingEmployees} employees in ${officeDetails.name} pending attendance`
+        ? `Attendance already finalized for ${officeDetails.name}`
+        : `${remainingEmployees} pending check-in, ${pendingClockouts} pending clock-out in ${officeDetails.name}`
     });
 
   } catch (error) {
     console.error("Error checking bulk attendance status:", error);
     res.status(500).json({ 
       error: "Failed to check bulk attendance status", 
+      details: error.message 
+    });
+  }
+};
+
+// Cron auto-finalize handler (invoked by scheduler or Vercel Cron)
+export const cronAutoFinalize = async (req, res) => {
+  try {
+    const results = await checkAndRunAutoFinalize(req.db);
+    res.json({
+      message: "Auto-finalize check completed",
+      processedCount: results.length,
+      results
+    });
+  } catch (error) {
+    console.error("Cron auto-finalize error:", error);
+    res.status(500).json({ 
+      error: "Failed to execute auto-finalize check", 
       details: error.message 
     });
   }

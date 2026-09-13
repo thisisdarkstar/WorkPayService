@@ -1,4 +1,10 @@
 {
+  "crons": [
+    {
+      "path": "/api/attendances/cron-auto-finalize",
+      "schedule": "*/10 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",

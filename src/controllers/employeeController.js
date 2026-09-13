@@ -470,6 +470,15 @@ export const getEmployeeDashboard = async (req, res) => {
       },
     });
 
+    // Check if office is finalized for today in IST
+    const isOfficeFinalizedToday = (lastFinalized) => {
+      if (!lastFinalized) return false;
+      const lastFinalizedIST = moment.tz(lastFinalized, "Asia/Kolkata").format("YYYY-MM-DD");
+      const todayDateIST = moment.tz("Asia/Kolkata").format("YYYY-MM-DD");
+      return lastFinalizedIST === todayDateIST;
+    };
+    const isFinalized = isOfficeFinalizedToday(employee?.office?.lastFinalized);
+
     // ✅ Build response with IST conversion
     const response = {
       employeeDetails: {
@@ -483,7 +492,9 @@ export const getEmployeeDashboard = async (req, res) => {
         overtimeRate: employee.overtimeRate,
         checkinTime: attendance ? formatTimeOnlyIST(attendance.checkInTime) : null,
         checkoutTime: attendance ? formatTimeOnlyIST(attendance.checkOutTime) : null,
+        status: attendance ? attendance.status : null,
         overtime: attendance ? attendance.overTime : null,
+        isFinalized,
         accountNumber:employee.accountNumber,
         ifscCode:employee.ifscCode
       },
@@ -493,7 +504,8 @@ export const getEmployeeDashboard = async (req, res) => {
         checkin: formatTimeOnlyIST(employee.office.checkin),
         checkout: formatTimeOnlyIST(employee.office.checkout),
         breakTime: employee.office.breakTime, // in minutes
-        range:employee.office.range
+        range:employee.office.range,
+        isFinalized
       },
     };
 

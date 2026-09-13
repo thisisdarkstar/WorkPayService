@@ -3,7 +3,7 @@
 // Create office (only if it does not exist)
 export const createOffice = async (req, res) => {
   try {
-    const {name, latitude, longitude, checkin, checkout, breakTime ,range} = req.body;
+    const {name, latitude, longitude, checkin, checkout, breakTime, range, autoFinalizeTime} = req.body;
 
     // Validate required fields
     if (!latitude || !longitude || !checkin || !checkout) {
@@ -18,6 +18,7 @@ export const createOffice = async (req, res) => {
     console.log('Checkin UTC:', checkin);
     console.log('Checkout UTC:', checkout);
     console.log('Break Time:', breakTime);
+    console.log('Auto Finalize Time:', autoFinalizeTime);
 
     const office = await req.db.office.create({
       data: {
@@ -28,6 +29,7 @@ export const createOffice = async (req, res) => {
         checkout, // Already a valid date string from frontend
         breakTime: breakTime || 60 , // Default 1 hour break if not provided
         range:Number(range) || 1000,
+        autoFinalizeTime: autoFinalizeTime ? new Date(autoFinalizeTime) : null,
       },
     });
 
@@ -63,7 +65,7 @@ export const getOffices = async (req, res) => {
 export const updateOffice = async (req, res) => {
   try {
     const { id } = req.params;
-    const {name, latitude, longitude, checkin, checkout ,breakTime,range} = req.body;
+    const {name, latitude, longitude, checkin, checkout, breakTime, range, autoFinalizeTime} = req.body;
 
     const office = await req.db.office.findFirst(
       {
@@ -81,8 +83,12 @@ export const updateOffice = async (req, res) => {
       checkin,
       checkout,
       breakTime,
-      range:Number(range)
+      range: Number(range),
     };
+
+    if (autoFinalizeTime !== undefined) {
+      updateData.autoFinalizeTime = autoFinalizeTime ? new Date(autoFinalizeTime) : null;
+    }
 
     const updatedOffice = await req.db.office.update({
       where: { id: office.id },

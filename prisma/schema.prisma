@@ -19,6 +19,7 @@ enum PayType {
   SALARY
   OVERTIME
   DEDUCTION
+  BONUS
 }
 
 enum LeaveStatus {
@@ -63,7 +64,9 @@ model Office {
   checkout  DateTime
   breakTime Int        @default(0)
   employees Employee[]
-  range     Int        @default(1000)
+  range            Int        @default(1000)
+  autoFinalizeTime DateTime?
+  lastFinalized    DateTime?
 }
 
 model Holiday {
