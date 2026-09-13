@@ -33,7 +33,7 @@ export const loginEmployee = async (req, res) => {
     const token = jwt.sign(
       { id: employee.id, email: employee.email, role: "employee" },
       JWT_SECRET,
-      { expiresIn: "1d" }
+      { expiresIn: "30d" }
     );
 
     res.json({ message: "Employee login successful", token });
