@@ -17,10 +17,21 @@ async function main() {
 
   // 🔑 Hash passwords
   const adminPassword = await bcrypt.hash("Admin@123", 10);
+  const chiranjeebPassword = await bcrypt.hash("1234567890", 10);
   const empPassword = await bcrypt.hash("Emp@123", 10);
 
-  // 👨‍💼 Create Admin
+  // 👨‍💼 Create Primary Admin
   const admin = await prisma.admin.create({
+    data: {
+      name: "Chiranjeeb Nayak",
+      phone: "1234567890",
+      email: "chiranjeebnayak.37@gmail.com",
+      password: chiranjeebPassword,
+    },
+  });
+
+  // 👨‍💼 Create Demo Admin
+  await prisma.admin.create({
     data: {
       name: "System Admin",
       phone: "9999999999",
