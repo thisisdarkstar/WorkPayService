@@ -66,7 +66,7 @@ export const addTransaction = async (req, res) => {
     });
   } catch (error) {
     console.error("Error settling transaction:", error);
-    res.status(500).json({ error: "Failed to settle transaction" });
+    res.status(500).json({ error: error?.message || "Failed to settle transaction" });
   }
 };
 
