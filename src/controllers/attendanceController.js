@@ -555,7 +555,8 @@ export const markAttendanceForAbsentEmployees = async (req, res) => {
       targetOfficeId = firstOffice.id;
     }
 
-    const result = await finalizeOfficeAttendance(req.db, targetOfficeId);
+    const targetDate = req.body?.date || req.query?.date || null;
+    const result = await finalizeOfficeAttendance(req.db, targetOfficeId, targetDate);
 
     if (result.skipped) {
       return res.status(400).json({
