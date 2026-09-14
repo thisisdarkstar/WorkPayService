@@ -89,6 +89,12 @@ app.get("/", (req, res) => {
   res.send(responsePayload);
 });
 
+// Authorized Digital Sellers for Mobile Apps (IAB Tech Lab standard for Google AdMob)
+app.get("/app-ads.txt", (req, res) => {
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.status(200).send("google.com, pub-5483665722366697, DIRECT, f08c47fec0942fa0\n");
+});
+
 app.use("/api/admins", adminRoutes);
 app.use("/api/offices", officeRoutes);
 app.use("/api/employees", employeeRoutes);
