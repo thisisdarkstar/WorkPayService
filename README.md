@@ -165,6 +165,64 @@ You can inspect all request schemas, response models, and test endpoints live wi
 
 ---
 
+## 🕒 Smart Workday-Aware Attendance Finalization System
+
+WorkPayService incorporates a specialized **Smart Workday-Aware Windowing System** designed to solve the real-world operational gap between calendar midnight (00:00) and physical workday shift timings.
+
+### ❓ The Problem It Solves
+Admins frequently review and close out attendance late in the evening or early overnight (e.g. 12:30 AM – 2:00 AM). Without workday awareness:
+- The server clock is technically on the *new calendar day*.
+- Finalizing at 1:00 AM would mistakenly finalize the *upcoming day* before staff even wake up.
+- All employees would be marked as `ABSENT`, salary deductions would be charged prematurely, and morning check-ins would be blocked.
+
+### ⚙️ How Smart Windowing Works
+
+```
+Timeline:
+[--- Yesterday Shift (08:00 - 17:00) ---]  ===>  [Midnight (00:00)]  ===>  [Overnight Window]  ===>  [Today Shift Starts (08:00)]
+                                                                               (00:00 - 08:00)
+                                                                            Targets: Yesterday      Targets: Today
+```
+
+#### 1. Overnight Window (`00:00` to Shift Check-in, e.g. `08:00 AM IST`)
+When an admin clicks "Finalize Attendance" (or the background cron runs) between midnight and the office check-in time:
+- **Yesterday's Shift Not Yet Finalized**:
+  - The system automatically identifies that the admin is closing **yesterday's shift**.
+  - Clocks out any employees from yesterday who forgot to check out (capped at yesterday's checkout time, 0 false overtime).
+  - Marks unrecorded employees as `ABSENT` (with salary deduction) or `LEAVE` for yesterday.
+  - Updates `office.lastFinalized` to **yesterday's date** (`endOf("day")`).
+  - **Crucially: Today's new workday remains 100% open and untouched.** When employees arrive in the morning, they can check in normally!
+- **Yesterday's Shift Already Finalized**:
+  - The system protects today's workday and returns a polite informational response:
+    > *"Yesterday (YYYY-MM-DD) was already finalized, and today's shift starts at hh:mm A. Today's attendance cannot be finalized before shift starts."*
+
+#### 2. Workday Window (After Shift Check-in, e.g. `08:00 AM IST` onwards)
+- The system targets and finalizes **today's shift**.
+- Clocks out unclocked employees (to `office.checkout` if finalized after shift end, or to `now` if finalized during shift hours).
+- Marks absent employees with daily salary deduction.
+- Prevents re-finalizing if today has already been finalized.
+
+#### 3. Storage Convention
+`office.lastFinalized` is stored as the target shift's date in IST (`targetMomentIST.clone().endOf("day").utc().toDate()`).
+This guarantees that all check-in validations (`isFinalizedToday`) compare IST calendar dates accurately:
+```javascript
+const lastFinalizedIST = moment.tz(office.lastFinalized, "Asia/Kolkata").format("YYYY-MM-DD");
+const todayDateIST = moment.tz("Asia/Kolkata").format("YYYY-MM-DD");
+return lastFinalizedIST === todayDateIST;
+```
+
+#### 4. Explicit Date Override
+Admins or automated test suites can pass an optional explicit date in the request body or query param:
+```json
+POST /api/attendances/finalizeAttendance/1
+{
+  "date": "2026-09-13"
+}
+```
+Future dates are strictly rejected (`Cannot finalize attendance for a future date`).
+
+---
+
 ## 🛡️ Production Deployment
 
 When deploying to platforms such as **Render**, **Railway**, **Fly.io**, or **AWS ECS**:
