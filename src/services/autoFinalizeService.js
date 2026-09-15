@@ -211,7 +211,6 @@ export const finalizeOfficeAttendance = async (db, officeId, requestedDate = nul
       name: true,
       baseSalary: true,
       joinedDate: true,
-      createdAt: true,
     },
   });
 

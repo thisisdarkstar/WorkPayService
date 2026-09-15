@@ -104,7 +104,7 @@ export const getEmployeeTransactions = async (req, res) => {
 
     const employee = await req.db.employee.findUnique({
       where: { id: empIdNum },
-      select: { baseSalary: true, joinedDate: true, createdAt: true }
+      select: { baseSalary: true, joinedDate: true }
     });
 
     if (!employee) return res.status(404).json({ error: "Employee not found" });
@@ -139,7 +139,7 @@ export const getEmployeeTransactions = async (req, res) => {
     // Determine joining date in IST
     const employeeJoinedMoment = employee.joinedDate 
       ? moment.tz(employee.joinedDate, "Asia/Kolkata").startOf("month")
-      : (employee.createdAt ? moment.tz(employee.createdAt, "Asia/Kolkata").startOf("month") : null);
+      : null;
 
     // Determine relevant past months:
     // Only include months on or after employee's joined date, OR months that have explicit transactions
@@ -252,7 +252,6 @@ export const getMonthlyTransactions = async (req, res) => {
         status: true,
         officeId: true,
         joinedDate: true,
-        createdAt: true,
         office: { select: { id: true, name: true } }
       },
       orderBy: { name: 'asc' }
@@ -269,7 +268,7 @@ export const getMonthlyTransactions = async (req, res) => {
 
       const empJoinedMoment = employee.joinedDate 
         ? moment.tz(employee.joinedDate, "Asia/Kolkata").startOf("month")
-        : (employee.createdAt ? moment.tz(employee.createdAt, "Asia/Kolkata").startOf("month") : null);
+        : null;
 
       if (!empJoinedMoment) return true;
       return empJoinedMoment.isSameOrBefore(requestedMonthMomentEnd);
