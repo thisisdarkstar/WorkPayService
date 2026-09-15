@@ -210,6 +210,8 @@ export const finalizeOfficeAttendance = async (db, officeId, requestedDate = nul
       id: true,
       name: true,
       baseSalary: true,
+      joinedDate: true,
+      createdAt: true,
     },
   });
 
@@ -273,7 +275,15 @@ export const finalizeOfficeAttendance = async (db, officeId, requestedDate = nul
     });
 
     const recordedEmpIds = new Set(existingRecords.map((r) => r.empId));
-    const employeesWithoutRecord = activeEmployees.filter((e) => !recordedEmpIds.has(e.id));
+    const employeesWithoutRecord = activeEmployees.filter((e) => {
+      if (recordedEmpIds.has(e.id)) return false;
+      // Do not mark absent or penalize if employee's joined date is strictly after the target date
+      if (e.joinedDate) {
+        const empJoinedDay = moment.tz(e.joinedDate, "Asia/Kolkata").startOf("day");
+        if (targetMomentIST.isBefore(empJoinedDay, "day")) return false;
+      }
+      return true;
+    });
 
     // Calculate daily deduction amount based on days in target month
     const daysInMonth = targetMomentIST.daysInMonth();
