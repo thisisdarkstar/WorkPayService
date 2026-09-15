@@ -333,10 +333,12 @@ export const getTodayAttendanceDashboard = async (req, res) => {
     let officeDetails;
 
     if (isAllOffices) {
-      // Get all active employees from all offices
+      // Get all active employees from all offices belonging to this admin
+      const adminId = req.admin?.id;
       const allEmployees = await req.db.employee.findMany({
         where: { 
-          status: 'ACTIVE'
+          status: 'ACTIVE',
+          ...(adminId ? { adminId: Number(adminId) } : {})
         },
         select: { id: true }
       });
@@ -344,11 +346,13 @@ export const getTodayAttendanceDashboard = async (req, res) => {
       employeeIds = allEmployees.map(emp => emp.id);
       officeDetails = { id: "all", name: "All Offices" };
     } else {
-      // Get employees for specific office
+      // Get employees for specific office belonging to this admin
+      const adminId = req.admin?.id;
       const officeEmployees = await req.db.employee.findMany({
         where: { 
           officeId: targetOfficeId,
-          status: 'ACTIVE'
+          status: 'ACTIVE',
+          ...(adminId ? { adminId: Number(adminId) } : {})
         },
         select: { id: true }
       });
