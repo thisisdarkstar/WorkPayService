@@ -8,7 +8,7 @@ const toISTString = (utcDate) => {
 // ✅ Add Transaction API (for admin)
 export const addTransaction = async (req, res) => {
   try {
-    const { empId, amount, description, type } = req.body;
+    const { empId, amount, description, type, month, year, date } = req.body;
 
     if (!empId || !amount || !type) {
       return res.status(400).json({ error: "empId, amount and type are required" });
@@ -21,15 +21,34 @@ export const addTransaction = async (req, res) => {
       return res.status(403).json({ error: `Cannot add ${type} for Inactive employee` });
     }
 
-    // Current UTC time
+    // Determine target month and year
     const nowUTC = new Date();
+    let txDateUTC = nowUTC;
+    let targetYear = year ? Number(year) : moment.tz(nowUTC, "Asia/Kolkata").year();
+    let targetMonth = month ? Number(month) : (moment.tz(nowUTC, "Asia/Kolkata").month() + 1);
 
-    // If SALARY, check if already settled for current IST month
+    if (date) {
+      txDateUTC = new Date(date);
+      const mDate = moment.tz(txDateUTC, "Asia/Kolkata");
+      targetYear = mDate.year();
+      targetMonth = mDate.month() + 1;
+    } else if (month && year) {
+      const currentMoment = moment.tz(nowUTC, "Asia/Kolkata");
+      const isCurrentMonth = currentMoment.year() === targetYear && (currentMoment.month() + 1) === targetMonth;
+      if (isCurrentMonth) {
+        txDateUTC = nowUTC;
+      } else {
+        // Attribute to target month (last second of the month in IST)
+        txDateUTC = moment.tz([targetYear, targetMonth - 1, 1], "Asia/Kolkata").endOf("month").utc().toDate();
+      }
+    }
+
+    const monthStartUTC = moment.tz([targetYear, targetMonth - 1, 1], "Asia/Kolkata").startOf("month").utc().toDate();
+    const monthEndUTC = moment.tz([targetYear, targetMonth - 1, 1], "Asia/Kolkata").endOf("month").utc().toDate();
+    const monthName = moment.tz([targetYear, targetMonth - 1, 1], "Asia/Kolkata").format("MMMM");
+
+    // If SALARY, check if already settled for target month
     if (type === "SALARY") {
-      const istNow = moment.tz(nowUTC, "Asia/Kolkata");
-      const monthStartUTC = istNow.clone().startOf("month").utc().toDate();
-      const monthEndUTC = istNow.clone().endOf("month").utc().toDate();
-
       const existingSalary = await req.db.transaction.findFirst({
         where: {
           empId: Number(empId),
@@ -40,7 +59,7 @@ export const addTransaction = async (req, res) => {
 
       if (existingSalary) {
         return res.status(400).json({
-          error: "Salary transaction has already been done for this employee in the current month"
+          error: `Salary transaction has already been settled for this employee in ${monthName} ${targetYear}`
         });
       }
     }
@@ -52,7 +71,7 @@ export const addTransaction = async (req, res) => {
         amount: Number(amount),
         payType: type,
         description: description || null,
-        date: nowUTC
+        date: txDateUTC
       },
       include: { employee: { select: { id: true, name: true } } }
     });
@@ -107,19 +126,59 @@ export const getEmployeeTransactions = async (req, res) => {
       transactionsByMonth[monthName].push({ ...t, date: toISTString(t.date) });
     });
 
-    const currentMonthName = moment.tz(new Date(), "Asia/Kolkata").format("MMMM");
+    const currentIST = moment.tz(new Date(), "Asia/Kolkata");
+    const currentYear = currentIST.year();
+    const currentMonthIndex = currentIST.month(); // 0-11
+    const currentMonthName = currentIST.format("MMMM");
+
+    const allMonthNames = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"
+    ];
+
+    // Determine relevant months
+    let relevantMonths = [];
+    if (yearNum === currentYear) {
+      for (let i = currentMonthIndex - 1; i >= 0; i--) {
+        relevantMonths.push(allMonthNames[i]);
+      }
+    } else if (yearNum < currentYear) {
+      for (let i = 11; i >= 0; i--) {
+        relevantMonths.push(allMonthNames[i]);
+      }
+    }
+
+    // Include any months that have transactions
+    Object.keys(transactionsByMonth).forEach(m => {
+      if (m !== currentMonthName && !relevantMonths.includes(m)) {
+        relevantMonths.push(m);
+      }
+    });
+
+    const previousTransaction = relevantMonths.map(month => {
+      const txs = transactionsByMonth[month] || [];
+      const isPaid = txs.some(t => t.payType === "SALARY");
+      return {
+        month,
+        baseSalary: employee.baseSalary,
+        isPaid,
+        transactions: txs
+      };
+    });
+
+    const currentTxs = transactionsByMonth[currentMonthName] || [];
+    const currentIsPaid = currentTxs.some(t => t.payType === "SALARY");
 
     res.json({
       year: yearNum,
       currentTransaction: {
         month: currentMonthName,
         baseSalary: employee.baseSalary,
-        transactions: transactionsByMonth[currentMonthName] || []
+        isPaid: currentIsPaid,
+        transactions: currentTxs
       },
       baseSalary: employee.baseSalary,
-      previousTransaction: Object.entries(transactionsByMonth)
-        .filter(([m]) => m !== currentMonthName)
-        .map(([month, txs]) => ({ month, baseSalary: employee.baseSalary, transactions: txs }))
+      previousTransaction
     });
   } catch (error) {
     console.error("Error fetching employee transactions:", error);
@@ -128,7 +187,7 @@ export const getEmployeeTransactions = async (req, res) => {
 };
 
 // ✅ Get monthly transactions for all employees (IST-aware)
-// Current month: Show ALL employees | Previous months: Show only employees with transactions
+// Shows ALL employees across all months (past or present) so admin can review and settle
 export const getMonthlyTransactions = async (req, res) => {
   try {
     const { month, year } = req.query;
@@ -140,7 +199,6 @@ export const getMonthlyTransactions = async (req, res) => {
     const monthStartUTC = moment.tz([yearNum, monthNum - 1, 1], "Asia/Kolkata").startOf("month").utc().toDate();
     const monthEndUTC = moment.tz([yearNum, monthNum - 1, 1], "Asia/Kolkata").endOf("month").utc().toDate();
 
-    // Check if the requested month is the current month (in IST)
     const currentMonthIST = moment.tz(new Date(), "Asia/Kolkata");
     const requestedMonthIST = moment.tz([yearNum, monthNum - 1, 1], "Asia/Kolkata");
     const isCurrentMonth = currentMonthIST.isSame(requestedMonthIST, 'month') && currentMonthIST.isSame(requestedMonthIST, 'year');
@@ -152,63 +210,54 @@ export const getMonthlyTransactions = async (req, res) => {
       include: { employee: { select: { id: true, name: true, phone: true, baseSalary: true } } }
     });
 
-    let payments = [];
+    // Fetch all active employees (or all employees for this admin)
+    const adminId = req.admin?.id;
+    const whereEmp = adminId ? { adminId: Number(adminId) } : {};
 
-    if (isCurrentMonth) {
-      // CURRENT MONTH: Show ALL employees (even those without transactions)
-      const allEmployees = await req.db.employee.findMany({
-        select: { id: true, name: true, phone: true, baseSalary: true }
-      });
+    const allEmployees = await req.db.employee.findMany({
+      where: whereEmp,
+      select: { 
+        id: true, 
+        name: true, 
+        phone: true, 
+        baseSalary: true, 
+        status: true,
+        officeId: true,
+        office: { select: { id: true, name: true } }
+      },
+      orderBy: { name: 'asc' }
+    });
 
-      payments = allEmployees.map(employee => {
-        // Find all transactions for this employee in the given month
-        const employeeTransactions = transactions
-          .filter(t => t.empId === employee.id)
-          .map(t => ({
-            id: t.id,
-            amount: t.amount,
-            date: t.date,
-            payType: t.payType,
-            description: t.description
-          }));
-
-        return {
-          empId: employee.id,
-          name: employee.name,
-          phone: employee.phone,
-          baseSalary: employee.baseSalary,
-          transactions: employeeTransactions // Will be empty array [] if no transactions
-        };
-      });
-    } else {
-      // PREVIOUS MONTHS: Show only employees with transactions
-      const paymentsMap = new Map();
-      transactions.forEach(t => {
-        if (!paymentsMap.has(t.empId)) {
-          paymentsMap.set(t.empId, {
-            empId: t.empId,
-            name: t.employee.name,
-            phone: t.employee.phone,
-            baseSalary: t.employee.baseSalary,
-            transactions: []
-          });
-        }
-        paymentsMap.get(t.empId).transactions.push({
+    const payments = allEmployees.map(employee => {
+      const employeeTransactions = transactions
+        .filter(t => t.empId === employee.id)
+        .map(t => ({
           id: t.id,
           amount: t.amount,
-          date: t.date,
+          date: toISTString(t.date),
           payType: t.payType,
           description: t.description
-        });
-      });
+        }));
 
-      payments = Array.from(paymentsMap.values());
-    }
+      const isPaid = employeeTransactions.some(t => t.payType === "SALARY");
+
+      return {
+        empId: employee.id,
+        name: employee.name,
+        phone: employee.phone,
+        baseSalary: employee.baseSalary,
+        status: employee.status,
+        officeId: employee.officeId,
+        officeName: employee.office?.name || null,
+        isPaid,
+        transactions: employeeTransactions
+      };
+    });
 
     res.json({
       month: moment.tz(monthStartUTC, "Asia/Kolkata").format("MMMM"),
       year: yearNum,
-      isCurrentMonth, // Include this info in response for debugging
+      isCurrentMonth,
       payments
     });
   } catch (error) {

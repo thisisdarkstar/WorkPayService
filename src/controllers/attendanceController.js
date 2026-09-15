@@ -431,25 +431,20 @@ export const getTodayAttendanceDashboard = async (req, res) => {
       offices
     };
 
-    // Add pendingLeaves and offices only for specific office (not for "all")
-    if (!isAllOffices) {
-      // ---- Pending Leaves for specific office ----
-      const pendingLeaves = await req.db.leave.findMany({
-        where: { 
-          status: "PENDING",
-          empId: { in: employeeIds }
-        },
-        orderBy: { applyDate: "desc" },
-        take: 5,
-        include: {
-          employee: { select: { id: true, name: true } },
-        },
-      });
+    // ---- Pending Leaves (for all branches or selected office) ----
+    const pendingLeaves = await req.db.leave.findMany({
+      where: { 
+        status: "PENDING",
+        empId: { in: employeeIds }
+      },
+      orderBy: { applyDate: "desc" },
+      take: 10,
+      include: {
+        employee: { select: { id: true, name: true } },
+      },
+    });
 
-
-
-      response.pendingLeaves = pendingLeaves;
-    }
+    response.pendingLeaves = pendingLeaves;
 
     // ---- Final Response ----
     res.json(response);
@@ -839,9 +834,11 @@ export const getEmployeesByAttendanceStatus = async (req, res) => {
     }
 
     // 3. Get attendance records for today with the specified status
+    const statusCondition = attendanceStatus === "PRESENT" ? { in: ["PRESENT", "LATE"] } : attendanceStatus;
+
     const attendanceRecords = await req.db.attendance.findMany({
       where: {
-        status: attendanceStatus,
+        status: statusCondition,
         empId: { in: employeeIds },
         date: {
           gte: todayStartUTC,
@@ -878,6 +875,7 @@ export const getEmployeesByAttendanceStatus = async (req, res) => {
       email: record.employee.email,
       phone: record.employee.phone,
       office: record.employee.office,
+      status: record.status,
       checkInTime: record.checkInTime ? moment(record.checkInTime).tz("Asia/Kolkata").format("HH:mm:ss") : null,
       checkOutTime: record.checkOutTime ? moment(record.checkOutTime).tz("Asia/Kolkata").format("HH:mm:ss") : null,
       attendanceDate: moment(record.date).tz("Asia/Kolkata").format("YYYY-MM-DD"),

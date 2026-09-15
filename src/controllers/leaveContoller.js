@@ -30,10 +30,11 @@ export const applyLeave = async (req, res) => {
         .json({ error: "Start date cannot be after end date" });
     }
 
-    // 1️⃣ Overlapping leave check
+    // 1️⃣ Overlapping leave check (only conflict with APPROVED leaves)
     const existingLeaves = await req.db.leave.findMany({
       where: {
         empId: Number(empId),
+        status: "APPROVED",
         OR: [
           {
             AND: [
@@ -65,7 +66,7 @@ export const applyLeave = async (req, res) => {
 
     if (existingLeaves.length > 0) {
       return res.status(400).json({
-        error: "Leave dates conflict with existing leave applications",
+        error: "Leave dates conflict with existing approved leave applications",
         conflictingLeaves: existingLeaves.map((l) => ({
           id: l.id,
           fromDate: formatDateIST(l.fromDate),
@@ -207,17 +208,26 @@ export const applyLeave = async (req, res) => {
 // ---------------- Get Leave Summary (Office-specific) ----------------
 export const getLeaveSummary = async (req, res) => {
   try {
-    // 1. Determine target office (same logic as other controllers)
     let targetOfficeId;
+    let isAllOffices = false;
+    let employeeIds = [];
+    let officeDetails;
     const { officeId } = req.params;
     
     console.log("DEBUG - Getting leave summary for officeId:", officeId);
     
-    if (officeId !== undefined) {
-      // Use the provided officeId
+    if (officeId === "all" || officeId === undefined) {
+      isAllOffices = true;
+      const allEmployees = await req.db.employee.findMany({
+        where: { 
+          status: 'ACTIVE'
+        },
+        select: { id: true }
+      });
+      employeeIds = allEmployees.map(emp => emp.id);
+      officeDetails = { id: "all", name: "All Branches" };
+    } else {
       targetOfficeId = Number(officeId);
-      
-      // Verify office exists
       const officeExists = await req.db.office.findUnique({
         where: { id: targetOfficeId },
         select: { id: true, name: true }
@@ -226,57 +236,40 @@ export const getLeaveSummary = async (req, res) => {
       if (!officeExists) {
         return res.status(404).json({ error: "Office not found" });
       }
-    } else {
-      // Get the first office if no officeId provided
-      const firstOffice = await req.db.office.findFirst({
-        orderBy: { id: 'asc' },
-        select: { id: true, name: true }
+      officeDetails = officeExists;
+
+      const officeEmployees = await req.db.employee.findMany({
+        where: { 
+          officeId: targetOfficeId,
+          status: 'ACTIVE'
+        },
+        select: { id: true }
       });
-      
-      if (!firstOffice) {
-        return res.status(404).json({ error: "No offices found" });
-      }
-      
-      targetOfficeId = firstOffice.id;
+
+      employeeIds = officeEmployees.map(emp => emp.id);
     }
-
-    // 2. Get all active employees for the target office
-    const officeEmployees = await req.db.employee.findMany({
-      where: { 
-        officeId: targetOfficeId,
-        status: 'ACTIVE'
-      },
-      select: { id: true }
-    });
-
-    const employeeIds = officeEmployees.map(emp => emp.id);
     
-    console.log("DEBUG - Total active employees in office:", employeeIds.length);
-
-    const office = await req.db.office.findUnique({
-      where: { id: targetOfficeId },
-      select: { id: true, name: true }
-    });
+    console.log("DEBUG - Total active employees in leave summary scope:", employeeIds.length);
 
     if (employeeIds.length === 0) {
       return res.json({
-        office: office,
+        office: officeDetails,
         approvedLeaves: [],
         rejectedLeaves: [],
         pendingLeaves: [],
-        message: "No active employees found in this office"
+        message: "No active employees found"
       });
     }
 
-    // 3. Fetch leaves filtered by office employees
+    // 3. Fetch leaves filtered by employees
     const fetchLeaves = async (status) => {
       return req.db.leave.findMany({
         where: { 
           status,
-          empId: { in: employeeIds } // Filter by office employees
+          empId: { in: employeeIds }
         },
         orderBy: { applyDate: "desc" },
-        take: status === "PENDING" ? undefined : 10,
+        take: status === "PENDING" ? undefined : 20,
         include: { employee: { select: { id: true, name: true } } },
       });
     };
@@ -293,12 +286,6 @@ export const getLeaveSummary = async (req, res) => {
         fromDate: formatDateIST(l.fromDate),
         toDate: formatDateIST(l.toDate),
       }));
-
-    // 4. Get office details for response
-    const officeDetails = await req.db.office.findUnique({
-      where: { id: targetOfficeId },
-      select: { id: true, name: true }
-    });
 
     console.log("DEBUG - Leave summary counts:", {
       approved: approved.length,
