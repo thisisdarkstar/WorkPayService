@@ -53,6 +53,8 @@ model Admin {
   email     String     @unique
   password  String
   employees Employee[]
+  offices   Office[]
+  holidays  Holiday[]
 }
 
 model Office {
@@ -67,14 +69,19 @@ model Office {
   range            Int        @default(1000)
   autoFinalizeTime DateTime?
   lastFinalized    DateTime?
+  adminId          Int
+  admin            Admin      @relation(fields: [adminId], references: [id])
 }
 
 model Holiday {
   id          Int      @id @default(autoincrement())
   description String
   date        DateTime
+  adminId     Int
+  admin       Admin    @relation(fields: [adminId], references: [id])
 
   @@index([date])
+  @@index([adminId])
 }
 
 model Employee {

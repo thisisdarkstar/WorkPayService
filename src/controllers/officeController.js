@@ -3,6 +3,7 @@
 // Create office (only if it does not exist)
 export const createOffice = async (req, res) => {
   try {
+    const adminId = req.admin.id;
     const {name, latitude, longitude, checkin, checkout, breakTime, range, autoFinalizeTime} = req.body;
 
     // Validate required fields
@@ -12,28 +13,19 @@ export const createOffice = async (req, res) => {
       });
     }
 
-    console.log('Creating office with data from body:');
-    console.log('Latitude:', latitude);
-    console.log('Longitude:', longitude);
-    console.log('Checkin UTC:', checkin);
-    console.log('Checkout UTC:', checkout);
-    console.log('Break Time:', breakTime);
-    console.log('Auto Finalize Time:', autoFinalizeTime);
-
     const office = await req.db.office.create({
       data: {
         name,
         latitude,
         longitude,
-        checkin, // Already a valid date string from frontend
-        checkout, // Already a valid date string from frontend
-        breakTime: breakTime || 60 , // Default 1 hour break if not provided
-        range:Number(range) || 1000,
+        checkin,
+        checkout,
+        breakTime: breakTime || 60,
+        range: Number(range) || 1000,
         autoFinalizeTime: autoFinalizeTime ? new Date(autoFinalizeTime) : null,
+        adminId,
       },
     });
-
-    console.log('Office created successfully with ID:', office.id);
 
     res.status(201).json({ 
       message: "Office created successfully", 
@@ -46,10 +38,12 @@ export const createOffice = async (req, res) => {
 };
 
 
-// ✅ Get Office Settings 
+// ✅ Get Office Settings — scoped to requesting admin
 export const getOffices = async (req, res) => {
   try {
+    const adminId = req.admin?.id;
     const offices = await req.db.office.findMany({
+      where: adminId ? { adminId: Number(adminId) } : {},
       orderBy: { id: "asc" }
     });
     res.json({ message: "Office settings fetched successfully", offices: offices || [] });
@@ -64,16 +58,15 @@ export const getOffices = async (req, res) => {
 // ✅ Update Office Settings
 export const updateOffice = async (req, res) => {
   try {
+    const adminId = req.admin.id;
     const { id } = req.params;
     const {name, latitude, longitude, checkin, checkout, breakTime, range, autoFinalizeTime} = req.body;
 
-    const office = await req.db.office.findFirst(
-      {
-        where: { id: Number(id) }
-      }
-    );
+    const office = await req.db.office.findFirst({
+      where: { id: Number(id), adminId }
+    });
     if (!office) {
-      return res.status(404).json({ error: "Office settings not found. Please create first." });
+      return res.status(404).json({ error: "Office not found or you do not have permission to edit it." });
     }
 
     const updateData = {
@@ -105,14 +98,14 @@ export const updateOffice = async (req, res) => {
 // ✅ Delete Office Settings
 export const deleteOffice = async (req, res) => {
   try {
+    const adminId = req.admin.id;
     const { id } = req.params;
-    const office = await req.db.office.findFirst(
-      {
-        where: { id: Number(id) }
-      }
-    );
+
+    const office = await req.db.office.findFirst({
+      where: { id: Number(id), adminId }
+    });
     if (!office) {
-      return res.status(404).json({ error: "Office settings not found" });
+      return res.status(404).json({ error: "Office not found or you do not have permission to delete it." });
     }
 
     const associatedEmployees = await req.db.employee.findMany({
@@ -122,7 +115,7 @@ export const deleteOffice = async (req, res) => {
 
     if (associatedEmployees.length > 0) {
       return res.status(400).json({ 
-        error: "Cannot delete office with associated employees. Please reassign  employees first.",
+        error: "Cannot delete office with associated employees. Please reassign employees first.",
       });
     }
 

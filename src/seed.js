@@ -49,6 +49,7 @@ async function main() {
       checkin: new Date("2025-09-01T03:30:00Z"),
       checkout: new Date("2025-09-01T13:00:00Z"),
       breakTime: 60,
+      adminId: admin.id,
     },
   });
 
@@ -74,10 +75,12 @@ async function main() {
       {
         description: "Independence Day",
         date: moment("2025-08-15").startOf("day").toDate(),
+        adminId: admin.id,
       },
       {
         description: "Gandhi Jayanti",
         date: moment("2025-10-02").startOf("day").toDate(),
+        adminId: admin.id,
       },
     ],
   });

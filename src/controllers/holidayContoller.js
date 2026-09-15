@@ -21,6 +21,7 @@ const getISTDateAsUTC = (dateString) => {
 // ✅ Get holidays for current year, grouped by month
 export const getHolidaysByYear = async (req, res) => {
   try {
+    const adminId = req.admin?.id;
     const now = new Date();
     const year = now.getFullYear();
 
@@ -34,6 +35,7 @@ export const getHolidaysByYear = async (req, res) => {
           gte: startOfYear,
           lt: endOfYear,
         },
+        ...(adminId ? { adminId: Number(adminId) } : {})
       },
       orderBy: { date: "asc" },
     });
@@ -46,7 +48,7 @@ export const getHolidaysByYear = async (req, res) => {
 
       acc[monthName].push({
         id: holiday.id,
-        date: holiday.date, // stored with time 00:00:00
+        date: holiday.date,
         description: holiday.description,
       });
 
@@ -89,10 +91,11 @@ export const addHoliday = async (req, res) => {
     console.log("DEBUG - Stored UTC date:", holidayDateUTC);
     console.log("DEBUG - Converted back to IST:", toISTDateString(holidayDateUTC));
 
-    // Check if holiday already exists on this date
+    // Check if holiday already exists on this date for THIS admin
     const existingHoliday = await req.db.holiday.findFirst({
       where: {
-        date: holidayDateUTC
+        date: holidayDateUTC,
+        adminId: req.admin.id
       }
     });
 
@@ -101,13 +104,14 @@ export const addHoliday = async (req, res) => {
         error: "A holiday already exists on this date",
         existing: {
           ...existingHoliday,
-          date: toISTDateString(existingHoliday.date) // Convert back to IST for response
+          date: toISTDateString(existingHoliday.date)
         }
       });
     }
 
-    // Get all employees to create attendance records
+    // Get only THIS admin's employees to create attendance records
     const employees = await req.db.employee.findMany({
+      where: { adminId: req.admin.id },
       select: { id: true }
     });
 
@@ -131,7 +135,8 @@ export const addHoliday = async (req, res) => {
       const holiday = await tx.holiday.create({
         data: {
           description,
-          date: holidayDateUTC, // Store as UTC (like attendance)
+          date: holidayDateUTC,
+          adminId: req.admin.id,
         },
       });
 
@@ -186,6 +191,11 @@ export const deleteHoliday = async (req, res) => {
     const holiday = await req.db.holiday.findUnique({ where: { id: Number(id) } });
     if (!holiday) {
       return res.status(404).json({ error: "Holiday not found" });
+    }
+
+    // Verify ownership
+    if (req.admin?.id && holiday.adminId !== req.admin.id) {
+      return res.status(403).json({ error: "Unauthorized: this holiday does not belong to your account" });
     }
 
     // Get the holiday date for finding associated attendance records

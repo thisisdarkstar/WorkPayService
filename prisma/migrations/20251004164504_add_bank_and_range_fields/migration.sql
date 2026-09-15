@@ -1,6 +1,0 @@
--- AlterTable
-ALTER TABLE `Employee` ADD COLUMN `accountNumber` VARCHAR(191) NULL,
-    ADD COLUMN `ifscCode` VARCHAR(191) NULL;
-
--- AlterTable
-ALTER TABLE `Office` ADD COLUMN `range` INTEGER NOT NULL DEFAULT 1000;
