@@ -218,9 +218,11 @@ export const getLeaveSummary = async (req, res) => {
     
     if (officeId === "all" || officeId === undefined) {
       isAllOffices = true;
+      const adminId = req.admin?.id;
       const allEmployees = await req.db.employee.findMany({
         where: { 
-          status: 'ACTIVE'
+          status: 'ACTIVE',
+          ...(adminId ? { adminId: Number(adminId) } : {})
         },
         select: { id: true }
       });
@@ -238,10 +240,12 @@ export const getLeaveSummary = async (req, res) => {
       }
       officeDetails = officeExists;
 
+      const adminId = req.admin?.id;
       const officeEmployees = await req.db.employee.findMany({
         where: { 
           officeId: targetOfficeId,
-          status: 'ACTIVE'
+          status: 'ACTIVE',
+          ...(adminId ? { adminId: Number(adminId) } : {})
         },
         select: { id: true }
       });
@@ -328,13 +332,19 @@ export const updateLeaveStatus = async (req, res) => {
             id: true, 
             name: true, 
             leaveBalance: true,
-            baseSalary: true // Include baseSalary for dynamic calculation
+            baseSalary: true,
+            adminId: true // for ownership verification
           } 
         } 
       },
     });
 
     if (!leave) return res.status(404).json({ error: "Leave not found" });
+
+    // Verify this leave belongs to an employee managed by the requesting admin
+    if (req.admin?.id && leave.employee.adminId !== req.admin.id) {
+      return res.status(403).json({ error: "Unauthorized: this employee does not belong to your account" });
+    }
 
     if (leave.status === status) {
       return res.status(400).json({ error: `Leave is already ${status.toLowerCase()}` });
