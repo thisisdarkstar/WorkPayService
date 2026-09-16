@@ -9,6 +9,7 @@
     "start": "node src/server.js",
     "build": "prisma generate",
     "seed": "node src/seed.js",
+    "create-admin": "node scripts/create-admin.js",
     "postinstall": "prisma generate"
   },
   "keywords": [],

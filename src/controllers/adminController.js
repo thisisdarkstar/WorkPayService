@@ -39,9 +39,18 @@ export const loginAdmin = async (req, res) => {
   }
 };
 
-// Create Admin
+// Create Admin (Guarded against unauthorized HTTP creation; use internal script 'npm run create-admin')
 export const createAdmin = async (req, res) => {
   try {
+    const superAdminSecret = process.env.SUPER_ADMIN_SECRET_KEY;
+    const providedKey = req.headers["x-super-admin-key"];
+
+    if (!superAdminSecret || providedKey !== superAdminSecret) {
+      return res.status(403).json({
+        error: "Forbidden: Direct admin creation via HTTP is disabled. Please use the internal CLI script 'npm run create-admin' or provide a valid 'x-super-admin-key' header.",
+      });
+    }
+
     const { name, phone, email, password } = req.body;
 
     if (!name || !phone || !email || !password) {
