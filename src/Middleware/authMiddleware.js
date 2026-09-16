@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import prisma from "../prisma.js";
+import { sendApiError } from "../utils/errorHandler.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret"; // keep in .env
 
@@ -25,8 +26,6 @@ export const adminAuth = async (req, res, next) => {
     req.admin = admin; // attach DB record
     next();
   } catch (error) {
-    console.error("Admin Auth error:", error);
-
     if (error.name === "TokenExpiredError") {
       return res.status(401).json({ error: "Token expired, please login again" });
     }
@@ -34,7 +33,7 @@ export const adminAuth = async (req, res, next) => {
       return res.status(401).json({ error: "Invalid token" });
     }
 
-    res.status(500).json({ error: "Authentication failed" });
+    return sendApiError(res, error, 500, "Authentication failed");
   }
 };
 
@@ -64,8 +63,6 @@ export const employeeAuth = async (req, res, next) => {
     req.employee = employee; // attach DB record
     next();
   } catch (error) {
-    console.error("Employee Auth error:", error);
-
     if (error.name === "TokenExpiredError") {
       return res.status(401).json({ error: "Token expired, please login again" });
     }
@@ -73,7 +70,7 @@ export const employeeAuth = async (req, res, next) => {
       return res.status(401).json({ error: "Invalid token" });
     }
 
-    res.status(500).json({ error: "Authentication failed" });
+    return sendApiError(res, error, 500, "Authentication failed");
   }
 };
 
@@ -103,8 +100,6 @@ export const adminOrEmployeeAuth = async (req, res, next) => {
     req.user = { ...decoded, dbUser: user };
     next();
   } catch (error) {
-    console.error("Auth error:", error);
-
     if (error.name === "TokenExpiredError") {
       return res.status(401).json({ error: "Token expired, please login again" });
     }
@@ -112,6 +107,6 @@ export const adminOrEmployeeAuth = async (req, res, next) => {
       return res.status(401).json({ error: "Invalid token" });
     }
 
-    res.status(500).json({ error: "Authentication failed" });
+    return sendApiError(res, error, 500, "Authentication failed");
   }
 };

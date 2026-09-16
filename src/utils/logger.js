@@ -9,6 +9,8 @@ const isServerless = Boolean(
   process.env.LAMBDA_TASK_ROOT
 );
 
+const isProduction = process.env.NODE_ENV === "production" || isServerless;
+
 const colorizeJSON = (obj) => {
   const json = JSON.stringify(obj, null, 2);
   return json.replace(
@@ -33,30 +35,45 @@ const buildLogEntry = ({ timestamp, level, message, metadata = {} }) => {
 
   if (metadata.method) logEntry.method = metadata.method;
   if (metadata.statusCode) logEntry.status_code = metadata.statusCode;
+  if (metadata.duration_ms !== undefined) logEntry.duration_ms = metadata.duration_ms;
   if (metadata.ip) logEntry.ip = metadata.ip;
   if (metadata.req_header) logEntry.req_header = metadata.req_header;
   if (metadata.req_body) logEntry.req_body = metadata.req_body;
   if (metadata.res_body) logEntry.res_body = metadata.res_body;
   if (metadata.dbQuery) logEntry.db_query = metadata.dbQuery;
   if (metadata.dbParams) logEntry.db_params = metadata.dbParams;
-  if (metadata.dbExecutionTimeMs) logEntry.db_duration_ms = metadata.dbExecutionTimeMs;
+  if (metadata.dbExecutionTimeMs !== undefined) logEntry.db_duration_ms = metadata.dbExecutionTimeMs;
+  if (metadata.dbError) logEntry.db_error = metadata.dbError;
   if (metadata.error) logEntry.error = metadata.error;
+  if (metadata.stack) logEntry.stack = metadata.stack;
 
   return logEntry;
 };
 
-const consoleFormat = winston.format.combine(
+// Colored multiline for local terminal debugging
+const devConsoleFormat = winston.format.combine(
   winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
   winston.format.printf((info) => colorizeJSON(buildLogEntry(info)))
 );
 
+// Single-line clean JSON for production log aggregators (Vercel, CloudWatch, Datadog)
+const prodConsoleFormat = winston.format.combine(
+  winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
+  winston.format.printf((info) => JSON.stringify(buildLogEntry(info)))
+);
+
+// File logging format (always clean single-line JSON)
 const fileFormat = winston.format.combine(
   winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
   winston.format.printf((info) => JSON.stringify(buildLogEntry(info)))
 );
 
 const transports = [
-  new winston.transports.Console({ format: consoleFormat }),
+  new winston.transports.Console({
+    format: isProduction ? prodConsoleFormat : devConsoleFormat,
+    handleExceptions: true,
+    handleRejections: true,
+  }),
 ];
 
 if (!isServerless) {
@@ -78,13 +95,16 @@ if (!isServerless) {
       format: fileFormat,
       maxsize: 10 * 1024 * 1024,
       maxFiles: 5,
+      handleExceptions: true,
+      handleRejections: true,
     })
   );
 }
 
 const logger = winston.createLogger({
-  level: "debug",
+  level: process.env.LOG_LEVEL || "debug",
   transports,
+  exitOnError: false, // Don't crash process on handled exception
 });
 
 export default logger;

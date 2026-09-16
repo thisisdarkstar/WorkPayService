@@ -1,5 +1,6 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import { sendApiError } from "../utils/errorHandler.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 
@@ -34,8 +35,7 @@ export const loginAdmin = async (req, res) => {
 
     res.json({ message: "Login successful", token });
   } catch (error) {
-    console.error("Admin Login error:", error);
-    res.status(500).json({ error: "Failed to login admin" });
+    return sendApiError(res, error, 500, "Failed to login admin");
   }
 };
 
@@ -83,8 +83,7 @@ export const createAdmin = async (req, res) => {
       admin,
     });
   } catch (error) {
-    console.error("Create Admin error:", error);
-    res.status(500).json({ error: "Failed to create admin" });
+    return sendApiError(res, error, 500, "Failed to create admin");
   }
 };
 
@@ -104,8 +103,7 @@ export const getAdminById = async (req, res) => {
     if (!admin) return res.status(404).json({ error: "Admin not found" });
     res.json(admin);
   } catch (error) {
-    console.error("Fetch Admin error:", error);
-    res.status(500).json({ error: "Failed to fetch admin" });
+    return sendApiError(res, error, 500, "Failed to fetch admin");
   }
 };
 
@@ -132,8 +130,7 @@ export const updateAdmin = async (req, res) => {
 
     res.json(updatedAdmin);
   } catch (error) {
-    console.error("Update Admin error:", error);
-    res.status(500).json({ error: "Failed to update admin" });
+    return sendApiError(res, error, 500, "Failed to update admin");
   }
 };
 
@@ -149,8 +146,7 @@ export const deleteAdmin = async (req, res) => {
 
     res.json({ message: "Admin deleted successfully" });
   } catch (error) {
-    console.error("Delete Admin error:", error);
-    res.status(500).json({ error: "Failed to delete admin" });
+    return sendApiError(res, error, 500, "Failed to delete admin");
   }
 };
 
@@ -168,8 +164,7 @@ export const resetPasswordWithPhone = async (req, res) => {
 
     res.json({ message: "Password reset successfully" });
   } catch (error) {
-    console.error("Reset Admin Password error:", error);
-    res.status(500).json({ error: "Something went wrong" });
+    return sendApiError(res, error, 500, "Something went wrong");
   }
 };
 
@@ -182,7 +177,6 @@ export const getAdminByPhone = async (req, res) => {
     const admin = await req.db.admin.findUnique({ where: { phone } });
     res.json({ adminFound: !!admin });
   } catch (error) {
-    console.error("Get Admin by Phone error:", error);
-    res.status(500).json({ error: "Something went wrong" });
+    return sendApiError(res, error, 500, "Something went wrong");
   }
 };

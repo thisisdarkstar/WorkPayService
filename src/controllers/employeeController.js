@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import moment from "moment-timezone";
+import { sendApiError } from "../utils/errorHandler.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
 
@@ -39,7 +40,7 @@ export const loginEmployee = async (req, res) => {
 
     res.json({ message: "Employee login successful", token });
   } catch (error) {
-    res.status(500).json({ error: "Failed to login employee", details: error.message });
+    return sendApiError(res, error, 500, "Failed to login employee");
   }
 };
 
@@ -169,15 +170,7 @@ export const createEmployee = async (req, res) => {
       }
     });
   } catch (error) {
-   console.log("--- FULL DATABASE ERROR START ---");
-    console.dir(error, { depth: null }); 
-    console.log("--- FULL DATABASE ERROR END ---");
-
-    res.status(500).json({ 
-      error: "Failed to create employee", 
-      // 2. Use String() to prevent the Symbol crash
-      details: error instanceof Error ? String(error.message) : "Unknown Database Error" 
-    });
+    return sendApiError(res, error, 500, "Failed to create employee");
   }
 };
 
@@ -209,8 +202,7 @@ export const getEmployees = async (req, res) => {
     });
     res.json(employees);
   } catch (error) {
-    console.error("Error fetching employees:", error);
-    res.status(500).json({ error: "Failed to fetch employees" });
+    return sendApiError(res, error, 500, "Failed to fetch employees");
   }
 };
 
@@ -237,8 +229,7 @@ export const getEmployeeById = async (req, res) => {
       ifscCode:employee.ifscCode
     } });
   } catch (error) {
-    console.error("Error fetching employee:", error);
-    res.status(500).json({ error: "Failed to fetch employee" });
+    return sendApiError(res, error, 500, "Failed to fetch employee");
   }
 };
 
@@ -298,8 +289,7 @@ export const updateEmployee = async (req, res) => {
       ifscCode:updatedEmployee.ifscCode
     } });
   } catch (error) {
-    console.error("Error updating employee:", error);
-    res.status(500).json({ error: "Failed to update employee" });
+    return sendApiError(res, error, 500, "Failed to update employee");
   }
 };
 
@@ -325,8 +315,7 @@ export const updateEmployeeStatus = async (req, res) => {
     });
     res.json({ message: `Employee status updated to ${status} for: ${updatedEmployee.name}` });
   } catch (error) {
-    console.error("Error updating employee status:", error);
-    res.status(500).json({ error: "Failed to update employee status" });
+    return sendApiError(res, error, 500, "Failed to update employee status");
   }
 };
 
@@ -348,8 +337,7 @@ export const deleteEmployee = async (req, res) => {
 
     res.json({ message: "Employee deleted successfully" });
   } catch (error) {
-    console.error("Error deleting employee:", error);
-    res.status(500).json({ error: "Failed to delete employee" });
+    return sendApiError(res, error, 500, "Failed to delete employee");
   }
 };
 
@@ -386,8 +374,7 @@ export const resetPasswordWithJWT = async (req, res) => {
 
     res.json({ message: "Password updated successfully" });
   } catch (error) {
-    console.error("Reset Password with JWT error:", error);
-    res.status(500).json({ error: "Something went wrong" });
+    return sendApiError(res, error, 500, "Something went wrong");
   }
 };
 
@@ -439,8 +426,7 @@ export const adminResetEmployeePassword = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Admin Reset Employee Password error:", error);
-    res.status(500).json({ error: "Failed to reset employee password" });
+    return sendApiError(res, error, 500, "Failed to reset employee password");
   }
 };
 
@@ -464,8 +450,7 @@ export const getEmployeeByPhone = async (req, res) => {
 
     res.json({ employeeFound: !!employee });
   } catch (error) {
-    console.error("Get Employee by Phone error:", error);
-    res.status(500).json({ error: "Something went wrong" });
+    return sendApiError(res, error, 500, "Something went wrong");
   }
 };
 
@@ -552,8 +537,7 @@ export const getEmployeeDashboard = async (req, res) => {
 
     res.json(response);
   } catch (error) {
-    console.error("Error fetching employee dashboard:", error);
-    res.status(500).json({ error: "Failed to fetch dashboard details" });
+    return sendApiError(res, error, 500, "Failed to fetch dashboard details");
   }
 };
 
@@ -584,10 +568,6 @@ export const updateBankDetails = async (req, res) => {
       ifscCode:updatedEmployee.ifscCode
     } });
   } catch (error) {
-    console.error("Error updating bank details:", error);
-    res.status(500).json({ 
-      error: "Failed to update bank details", 
-      details: error instanceof Error ? error.message : "Internal Server Error" 
-    });
+    return sendApiError(res, error, 500, "Failed to update bank details");
   }
 };

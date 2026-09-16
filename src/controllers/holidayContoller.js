@@ -1,4 +1,5 @@
 import moment from "moment-timezone";
+import { sendApiError } from "../utils/errorHandler.js";
 
 
 // Convert UTC date to IST string for response (same as attendance)
@@ -70,8 +71,7 @@ export const getHolidaysByYear = async (req, res) => {
 
     res.json(response);
   } catch (error) {
-    console.error("Error fetching holidays:", error);
-    res.status(500).json({ error: "Failed to fetch holidays" });
+    return sendApiError(res, error, 500, "Failed to fetch holidays");
   }
 };
 
@@ -185,8 +185,7 @@ export const addHoliday = async (req, res) => {
       attendanceCreated: result.attendanceCount
     });
   } catch (error) {
-    console.error("Error adding holiday:", error);
-    res.status(500).json({ error: "Failed to add holiday" });
+    return sendApiError(res, error, 500, "Failed to add holiday");
   }
 };
 
@@ -248,7 +247,6 @@ export const deleteHoliday = async (req, res) => {
       attendanceDeleted: result.attendanceDeleted
     });
   } catch (error) {
-    console.error("Error deleting holiday:", error);
-    res.status(500).json({ error: "Failed to delete holiday", details: error.message });
+    return sendApiError(res, error, 500, "Failed to delete holiday");
   }
 };

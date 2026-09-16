@@ -9,6 +9,15 @@ const SENSITIVE_KEYS = new Set([
   "authorization",
   "token",
   "refreshtoken",
+  "accountnumber",
+  "ifsccode",
+  "cookie",
+  "set-cookie",
+  "secret",
+  "secretkey",
+  "apikey",
+  "superadminsecret",
+  "x-super-admin-key",
 ]);
 
 export const sanitizeForLog = (data) => {
@@ -34,6 +43,11 @@ export const httpLogger = (req, res, next) => {
   const apiName = ctx?.apiName || requestContext.getApiName() || req.originalUrl || req.url;
   const method = req.method;
   const ip = req.ip || req.headers["x-forwarded-for"] || req.socket?.remoteAddress;
+
+  // Ensure X-Transaction-Id header is on response early
+  if (!res.headersSent) {
+    res.setHeader("X-Transaction-Id", txnId);
+  }
 
   // 1️⃣ Log Incoming API Call IMMEDIATELY when the hit reaches the server
   logger.info("Incoming API Call", {
@@ -65,19 +79,22 @@ export const httpLogger = (req, res, next) => {
     const duration = Date.now() - start;
     const currentTxnId = requestContext.getTxnId() || txnId;
     const currentApiName = requestContext.getApiName() || apiName;
+    const ctxError = requestContext.getError();
 
-    // Flush Database Query logs for this request
+    // Flush Database Query logs for this request (with sanitized params)
     const dbLogs = requestContext.getLogs();
     dbLogs.forEach((l) => {
-      logger.info("Database Query", {
+      const isDbError = Boolean(l.dbError);
+      logger[isDbError ? "error" : "info"](isDbError ? "Database Query Failed" : "Database Query", {
         metadata: {
           apiName: currentApiName,
           method,
           messageNumber: requestContext.nextMessageNumber(),
           txnId: currentTxnId,
           dbQuery: l.dbQuery,
-          dbParams: l.dbParams,
+          dbParams: sanitizeForLog(l.dbParams),
           dbExecutionTimeMs: l.dbExecutionTimeMs,
+          ...(isDbError ? { dbError: l.dbError, error: l.dbError } : {}),
         },
       });
     });
@@ -94,16 +111,22 @@ export const httpLogger = (req, res, next) => {
     const statusCode = res.statusCode;
     const logLevel = statusCode >= 500 ? "error" : statusCode >= 400 ? "warn" : "info";
 
+    const errorMsg = ctxError?.message || parsedResBody?.error || (statusCode >= 400 ? `HTTP ${statusCode}` : null);
+    const errorStack = ctxError?.stack || null;
+
     logger[logLevel]("Outgoing API Response", {
       metadata: {
         apiName: currentApiName,
         method,
         statusCode,
+        duration_ms: duration,
         ip,
         messageNumber: requestContext.nextMessageNumber(),
         txnId: currentTxnId,
         message: `Completed with status ${statusCode} in ${duration}ms`,
         res_body: sanitizeForLog(parsedResBody),
+        ...(errorMsg ? { error: errorMsg } : {}),
+        ...(errorStack ? { stack: errorStack } : {}),
       },
     });
   };
@@ -118,6 +141,7 @@ export const httpLogger = (req, res, next) => {
           apiName: requestContext.getApiName() || apiName,
           method,
           txnId: currentTxnId,
+          duration_ms: duration,
           message: `Connection closed by client before response finished after ${duration}ms`,
         },
       });

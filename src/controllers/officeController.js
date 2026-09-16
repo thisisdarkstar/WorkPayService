@@ -1,5 +1,7 @@
 
 
+import { sendApiError } from "../utils/errorHandler.js";
+
 // Create office (only if it does not exist)
 export const createOffice = async (req, res) => {
   try {
@@ -32,8 +34,7 @@ export const createOffice = async (req, res) => {
       office
     });
   } catch (error) {
-    console.error("Error creating office:", error);
-    res.status(500).json({ error: "Failed to create office" });
+    return sendApiError(res, error, 500, "Failed to create office");
   }
 };
 
@@ -50,8 +51,7 @@ export const getOffices = async (req, res) => {
     });
     res.json({ message: "Office settings fetched successfully", offices: offices || [] });
   } catch (error) {
-    console.error("Error fetching office:", error);
-    res.status(500).json({ error: "Failed to fetch office" });
+    return sendApiError(res, error, 500, "Failed to fetch office");
   }
 };
 
@@ -92,8 +92,7 @@ export const updateOffice = async (req, res) => {
 
     res.json({ message: `Office ${updatedOffice.name} settings updated successfully`, office: updatedOffice });
   } catch (error) {
-    console.error("Error updating office:", error);
-    res.status(500).json({ error: "Failed to update office" });
+    return sendApiError(res, error, 500, "Failed to update office");
   }
 };
 
@@ -127,7 +126,6 @@ export const deleteOffice = async (req, res) => {
 
     res.json({ message: `Office ${office.name} deleted successfully` });
   } catch (error) {
-    console.error("Error deleting office:", error);
-    res.status(500).json({ error: "Failed to delete office" });
+    return sendApiError(res, error, 500, "Failed to delete office");
   }
 };

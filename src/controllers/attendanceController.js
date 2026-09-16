@@ -1,5 +1,7 @@
 import moment from "moment-timezone";
 import { finalizeOfficeAttendance, checkAndRunAutoFinalize } from "../services/autoFinalizeService.js";
+import { sendApiError } from "../utils/errorHandler.js";
+import logger from "../utils/logger.js";
 
 // Convert UTC date to IST string for response
 const toISTString = (utcDate) =>
@@ -185,8 +187,7 @@ export const handleAttendance = async (req, res) => {
 
     res.status(400).json({ error: "Invalid type. Use 'checkin' or 'checkout'." });
   } catch (error) {
-    console.error("Attendance Error:", error);
-    res.status(500).json({ error: "Failed to handle attendance", details: error.message });
+    return sendApiError(res, error, 500, "Failed to handle attendance");
   }
 };
 
@@ -269,8 +270,7 @@ export const getEmployeeAttendanceByMonth = async (req, res) => {
       attendanceRecords: attendanceRecordsIST 
     });
   } catch (error) {
-    console.error("Error fetching employee attendance:", error);
-    res.status(500).json({ error: "Failed to fetch employee attendance" });
+    return sendApiError(res, error, 500, "Failed to fetch employee attendance");
   }
 };
 
@@ -281,7 +281,7 @@ export const getEmployeeAttendanceByMonth = async (req, res) => {
 export const getTodayAttendanceDashboard = async (req, res) => {
   try {
     // Opportunistically run auto-finalize check in background if any office deadline passed
-    checkAndRunAutoFinalize(req.db).catch(err => console.error('[AutoFinalize Error]', err));
+    checkAndRunAutoFinalize(req.db).catch(err => logger.error('[AutoFinalize Background Error]', { error: err?.message, stack: err?.stack }));
 
     let targetOfficeId;
     let isAllOffices = false;
@@ -456,8 +456,7 @@ export const getTodayAttendanceDashboard = async (req, res) => {
     // ---- Final Response ----
     res.json(response);
   } catch (error) {
-    console.error("Error fetching dashboard attendance:", error);
-    res.status(500).json({ error: "Failed to fetch dashboard attendance" });
+    return sendApiError(res, error, 500, "Failed to fetch dashboard attendance");
   }
 };
  
@@ -529,8 +528,7 @@ export const getEmployeeAttendanceByMonthInAdmin = async (req, res) => {
 
     res.json({ month, year, attendanceRecords: attendanceRecordsIST });
   } catch (error) {
-    console.error("Error fetching employee attendance:", error);
-    res.status(500).json({ error: "Failed to fetch employee attendance" });
+    return sendApiError(res, error, 500, "Failed to fetch employee attendance");
   }
 };
 
@@ -587,11 +585,7 @@ export const markAttendanceForAbsentEmployees = async (req, res) => {
       attendanceComplete: true
     });
   } catch (error) {
-    console.error("Error finalizing attendance:", error);
-    res.status(500).json({ 
-      error: "Failed to finalize attendance", 
-      details: error.message 
-    });
+    return sendApiError(res, error, 500, "Failed to finalize attendance");
   }
 };
 
@@ -736,11 +730,7 @@ export const checkBulkAttendanceStatus = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error checking bulk attendance status:", error);
-    res.status(500).json({ 
-      error: "Failed to check bulk attendance status", 
-      details: error.message 
-    });
+    return sendApiError(res, error, 500, "Failed to check bulk attendance status");
   }
 };
 
@@ -754,11 +744,7 @@ export const cronAutoFinalize = async (req, res) => {
       results
     });
   } catch (error) {
-    console.error("Cron auto-finalize error:", error);
-    res.status(500).json({ 
-      error: "Failed to execute auto-finalize check", 
-      details: error.message 
-    });
+    return sendApiError(res, error, 500, "Failed to execute auto-finalize check");
   }
 };
 
@@ -914,7 +900,6 @@ export const getEmployeesByAttendanceStatus = async (req, res) => {
       employees,
     });
   } catch (error) {
-    console.error("Error fetching employees by attendance status:", error);
-    res.status(500).json({ error: "Failed to fetch employees by attendance status" });
+    return sendApiError(res, error, 500, "Failed to fetch employees by attendance status");
   }
 };

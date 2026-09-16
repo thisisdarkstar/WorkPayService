@@ -1,4 +1,5 @@
 import moment from "moment-timezone";
+import { sendApiError } from "../utils/errorHandler.js";
 
 // Helper: convert UTC date to IST string
 const toISTString = (utcDate) => {
@@ -86,8 +87,7 @@ export const addTransaction = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Error settling transaction:", error);
-    res.status(500).json({ error: error?.message || "Failed to settle transaction" });
+    return sendApiError(res, error, 500, "Failed to settle transaction");
   }
 };
 
@@ -211,8 +211,7 @@ export const getEmployeeTransactions = async (req, res) => {
       previousTransaction
     });
   } catch (error) {
-    console.error("Error fetching employee transactions:", error);
-    res.status(500).json({ error: "Failed to fetch employee transactions" });
+    return sendApiError(res, error, 500, "Failed to fetch employee transactions");
   }
 };
 
@@ -312,8 +311,7 @@ export const getMonthlyTransactions = async (req, res) => {
       payments
     });
   } catch (error) {
-    console.error("Error fetching monthly transactions:", error);
-    res.status(500).json({ error: "Failed to fetch monthly transactions" });
+    return sendApiError(res, error, 500, "Failed to fetch monthly transactions");
   }
 };
 
@@ -362,7 +360,6 @@ export const getEmployeeTransactionsAdmin = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error fetching employee transactions:", error);
-    res.status(500).json({ error: "Failed to fetch employee transactions" });
+    return sendApiError(res, error, 500, "Failed to fetch employee transactions");
   }
 };

@@ -20,19 +20,39 @@ import { swaggerDocument } from "./swagger.js";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 
+// 🛡️ Global Process-Level Crash Protection
+process.on("unhandledRejection", (reason) => {
+  logger.error(`Unhandled Rejection: ${reason?.message || reason}`, {
+    metadata: {
+      error: reason?.message || String(reason),
+      stack: reason?.stack || null,
+    },
+  });
+});
+
+process.on("uncaughtException", (error) => {
+  logger.error(`Uncaught Exception: ${error.message}`, {
+    metadata: {
+      error: error.message,
+      stack: error.stack || null,
+    },
+  });
+});
+
 const app = express();
 
-// Trust reverse proxy (Cloudflare, AWS ALB, Nginx, Render, etc.) for rate limiting and IP tracking
+// Trust reverse proxy (Cloudflare, AWS ALB, Nginx, Render, Vercel, etc.) for rate limiting and IP tracking
 app.set("trust proxy", 1);
 
 // Security headers (keep CSP disabled for swagger-ui assets)
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
 
-// 1️⃣ Initialize Request Context FIRST for every single hit
+// 1️⃣ Initialize Request Context FIRST for every single hit & set X-Transaction-Id
 app.use((req, res, next) => {
   const txnId = req.headers["x-transaction-id"] || crypto.randomUUID();
   const apiName = req.originalUrl || req.url;
+  res.setHeader("X-Transaction-Id", txnId);
   requestContext.run({ txnId, apiName }, () => next());
 });
 
@@ -117,17 +137,18 @@ app.use((req, res) => {
 // 7️⃣ Global 500 error handler
 app.use((err, req, res, next) => {
   const txnId = requestContext.getTxnId();
-  logger.error(`${req.method} ${req.originalUrl || req.url} [${txnId}] - ${err.message}`, {
+  const apiName = req.originalUrl || req.url;
+  logger.error(`${req.method} ${apiName} [${txnId}] - ${err.message}`, {
     metadata: {
-      apiName: req.originalUrl || req.url,
+      apiName,
       method: req.method,
       statusCode: 500,
       txnId,
       error: err.message,
+      stack: err.stack,
     },
-    stack: err.stack,
   });
-  res.status(500).json({ error: "Internal Server Error", txnId });
+  res.status(500).json({ error: "Internal Server Error", message: err.message, txnId });
 });
 
 export default app;

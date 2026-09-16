@@ -1,4 +1,5 @@
 import moment from "moment-timezone";
+import { sendApiError } from "../utils/errorHandler.js";
 
 // ---------------- Helper ----------------
 const toUTC = (datetime) => {
@@ -198,11 +199,7 @@ export const applyLeave = async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error("Error applying leave:", error);
-    res.status(500).json({
-      error: "Failed to apply leave",
-      details: error.message,
-    });
+    return sendApiError(res, error, 500, "Failed to apply leave");
   }
 };
 
@@ -309,8 +306,7 @@ export const getLeaveSummary = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Error fetching leave summary:", error);
-    res.status(500).json({ error: "Failed to fetch leave summary" });
+    return sendApiError(res, error, 500, "Failed to fetch leave summary");
   }
 };
 
@@ -441,8 +437,7 @@ export const updateLeaveStatus = async (req, res) => {
     res.json(responseData);
 
   } catch (error) {
-    console.error("Error updating leave status:", error);
-    res.status(500).json({ error: "Failed to update leave status" });
+    return sendApiError(res, error, 500, "Failed to update leave status");
   }
 };
 
@@ -486,8 +481,7 @@ export const getLeavesByYear = async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error("Error fetching leaves:", error);
-    res.status(500).json({ error: "Failed to fetch leaves" });
+    return sendApiError(res, error, 500, "Failed to fetch leaves");
   }
 };
 
@@ -536,7 +530,6 @@ export const getEmployeeLeaveHistory = async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error("Error fetching leave history:", error);
-    res.status(500).json({ error: "Failed to fetch leave history" });
+    return sendApiError(res, error, 500, "Failed to fetch leave history");
   }
 };
