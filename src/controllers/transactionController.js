@@ -14,8 +14,10 @@ export const addTransaction = async (req, res) => {
       return res.status(400).json({ error: "empId, amount and type are required" });
     }
 
-    const employee = await req.db.employee.findUnique({ where: { id: Number(empId) } });
-    if (!employee) return res.status(404).json({ error: "Employee not found" });
+    const employee = await req.db.employee.findFirst({
+      where: { id: Number(empId), adminId: Number(req.admin.id) }
+    });
+    if (!employee) return res.status(404).json({ error: "Employee not found in your organization" });
 
     if (employee.status !== "ACTIVE") {
       return res.status(403).json({ error: `Cannot add ${type} for Inactive employee` });
@@ -231,19 +233,21 @@ export const getMonthlyTransactions = async (req, res) => {
     const requestedMonthIST = moment.tz([yearNum, monthNum - 1, 1], "Asia/Kolkata");
     const isCurrentMonth = currentMonthIST.isSame(requestedMonthIST, 'month') && currentMonthIST.isSame(requestedMonthIST, 'year');
 
-    // Get transactions for this month
+    const adminId = Number(req.admin.id);
+
+    // Get transactions for this month for THIS admin's employees
     const transactions = await req.db.transaction.findMany({
-      where: { date: { gte: monthStartUTC, lte: monthEndUTC } },
+      where: {
+        date: { gte: monthStartUTC, lte: monthEndUTC },
+        employee: { adminId }
+      },
       orderBy: { date: "asc" },
       include: { employee: { select: { id: true, name: true, phone: true, baseSalary: true } } }
     });
 
-    // Fetch all active employees (or all employees for this admin)
-    const adminId = req.admin?.id;
-    const whereEmp = adminId ? { adminId: Number(adminId) } : {};
-
+    // Fetch all active employees for this admin
     const allEmployees = await req.db.employee.findMany({
-      where: whereEmp,
+      where: { adminId },
       select: { 
         id: true, 
         name: true, 
@@ -322,11 +326,11 @@ export const getEmployeeTransactionsAdmin = async (req, res) => {
     const empIdNum = Number(empId);
     const yearNum = Number(year);
 
-    const employee = await req.db.employee.findUnique({
-      where: { id: empIdNum },
+    const employee = await req.db.employee.findFirst({
+      where: { id: empIdNum, adminId: Number(req.admin.id) },
       select: { baseSalary: true }
     });
-    if (!employee) return res.status(404).json({ error: "Employee not found" });
+    if (!employee) return res.status(404).json({ error: "Employee not found in your organization" });
 
     const yearStartUTC = moment.tz([yearNum, 0, 1], "Asia/Kolkata").startOf("year").utc().toDate();
     const yearEndUTC = moment.tz([yearNum, 0, 1], "Asia/Kolkata").endOf("year").utc().toDate();

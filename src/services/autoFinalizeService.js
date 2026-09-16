@@ -172,13 +172,14 @@ export const finalizeOfficeAttendance = async (db, officeId, requestedDate = nul
 
   const { startUTC: targetStartUTC, endUTC: targetEndUTC } = getISTRangeUTC(targetMomentIST.toDate());
 
-  // Check if target date is a holiday
+  // Check if target date is a holiday for this office's admin
   const holidayOnTargetDate = await db.holiday.findFirst({
     where: {
       date: {
         gte: targetStartUTC,
         lte: targetEndUTC,
       },
+      adminId: office.adminId,
     },
   });
 

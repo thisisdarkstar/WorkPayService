@@ -76,13 +76,14 @@ export const applyLeave = async (req, res) => {
       });
     }
 
-    // 2️⃣ Fetch holidays in range
+    // 2️⃣ Fetch holidays in range for THIS employee's admin
     const holidays = await req.db.holiday.findMany({
       where: {
         date: {
           gte: fromDateUTC,
           lte: toDateUTC,
         },
+        adminId: Number(req.employee.adminId),
       },
       select: { date: true },
     });
@@ -213,16 +214,16 @@ export const getLeaveSummary = async (req, res) => {
     let employeeIds = [];
     let officeDetails;
     const { officeId } = req.params;
+    const adminId = Number(req.admin.id);
     
     console.log("DEBUG - Getting leave summary for officeId:", officeId);
     
     if (officeId === "all" || officeId === undefined) {
       isAllOffices = true;
-      const adminId = req.admin?.id;
       const allEmployees = await req.db.employee.findMany({
         where: { 
           status: 'ACTIVE',
-          ...(adminId ? { adminId: Number(adminId) } : {})
+          adminId
         },
         select: { id: true }
       });
@@ -230,22 +231,21 @@ export const getLeaveSummary = async (req, res) => {
       officeDetails = { id: "all", name: "All Branches" };
     } else {
       targetOfficeId = Number(officeId);
-      const officeExists = await req.db.office.findUnique({
-        where: { id: targetOfficeId },
+      const officeExists = await req.db.office.findFirst({
+        where: { id: targetOfficeId, adminId },
         select: { id: true, name: true }
       });
       
       if (!officeExists) {
-        return res.status(404).json({ error: "Office not found" });
+        return res.status(404).json({ error: "Office not found or unauthorized" });
       }
       officeDetails = officeExists;
 
-      const adminId = req.admin?.id;
       const officeEmployees = await req.db.employee.findMany({
         where: { 
           officeId: targetOfficeId,
           status: 'ACTIVE',
-          ...(adminId ? { adminId: Number(adminId) } : {})
+          adminId
         },
         select: { id: true }
       });
@@ -498,6 +498,12 @@ export const getEmployeeLeaveHistory = async (req, res) => {
 
     if (!empId || !year)
       return res.status(400).json({ error: "empId and year are required" });
+
+    // Verify employee belongs to this admin
+    const employee = await req.db.employee.findFirst({
+      where: { id: Number(empId), adminId: Number(req.admin.id) }
+    });
+    if (!employee) return res.status(404).json({ error: "Employee not found in your organization" });
 
     // ✅ Fixed year range (covers full IST year)
     const startUTC = moment

@@ -38,12 +38,14 @@ export const createOffice = async (req, res) => {
 };
 
 
-// ✅ Get Office Settings — scoped to requesting admin
+// ✅ Get Office Settings — scoped strictly to requesting admin
 export const getOffices = async (req, res) => {
   try {
-    const adminId = req.admin?.id;
+    const adminId = Number(req.admin?.id);
+    if (!adminId) return res.status(401).json({ error: "Unauthorized: admin ID missing" });
+
     const offices = await req.db.office.findMany({
-      where: adminId ? { adminId: Number(adminId) } : {},
+      where: { adminId },
       orderBy: { id: "asc" }
     });
     res.json({ message: "Office settings fetched successfully", offices: offices || [] });

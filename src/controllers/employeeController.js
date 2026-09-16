@@ -63,6 +63,14 @@ export const createEmployee = async (req, res) => {
       return res.status(400).json({ error: "Employee with this email already exists" });
     }
 
+    // Verify office belongs to this admin
+    const office = await req.db.office.findFirst({
+      where: { id: Number(officeId), adminId: Number(adminId) }
+    });
+    if (!office) {
+      return res.status(400).json({ error: "Office not found or does not belong to your organization" });
+    }
+
     // hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -74,12 +82,13 @@ export const createEmployee = async (req, res) => {
     console.log("DEBUG - Employee creation date IST:", todayIST.format("YYYY-MM-DD"));
     console.log("DEBUG - Employee creation date UTC:", todayUTC);
 
-    // Get all holidays that are on or after TODAY (employee creation date)
+    // Get all holidays that are on or after TODAY (employee creation date) belonging to THIS admin
     const upcomingHolidays = await req.db.holiday.findMany({
       where: {
         date: {
           gte: todayUTC // Holidays on or after today
-        }
+        },
+        adminId: Number(adminId)
       },
       orderBy: {
         date: 'asc'
@@ -175,10 +184,11 @@ export const createEmployee = async (req, res) => {
 // ✅ Get all employees (excludes password hash, scoped by adminId)
 export const getEmployees = async (req, res) => {
   try {
-    const adminId = req.admin?.id;
-    const where = adminId ? { adminId: Number(adminId) } : {};
+    const adminId = Number(req.admin?.id);
+    if (!adminId) return res.status(401).json({ error: "Unauthorized: admin ID missing" });
+
     const employees = await req.db.employee.findMany({
-      where,
+      where: { adminId },
       select: {
         id: true,
         name: true,
@@ -208,11 +218,11 @@ export const getEmployees = async (req, res) => {
 export const getEmployeeById = async (req, res) => {
   try {
     const { id } = req.params;
-    const employee = await req.db.employee.findUnique({
-      where: { id: Number(id) },
+    const employee = await req.db.employee.findFirst({
+      where: { id: Number(id), adminId: Number(req.admin.id) },
     });
 
-    if (!employee) return res.status(404).json({ error: "Employee not found" });
+    if (!employee) return res.status(404).json({ error: "Employee not found in your organization" });
 
     res.json({message: `Employee fetched successfully: ${employee.name}`, data: {
       id: employee.id,
@@ -236,8 +246,24 @@ export const getEmployeeById = async (req, res) => {
 export const updateEmployee = async (req, res) => {
   try {
     const { id } = req.params;
-    const adminId = req.admin.id; // from adminAuth middleware
+    const adminId = Number(req.admin.id); // from adminAuth middleware
     const { name, phone, email, password, baseSalary, overtimeRate, officeId,accountNumber,ifscCode } = req.body;
+
+    const existingEmployee = await req.db.employee.findFirst({
+      where: { id: Number(id), adminId }
+    });
+    if (!existingEmployee) {
+      return res.status(404).json({ error: "Employee not found in your organization" });
+    }
+
+    if (officeId) {
+      const office = await req.db.office.findFirst({
+        where: { id: Number(officeId), adminId }
+      });
+      if (!office) {
+        return res.status(400).json({ error: "Office not found or does not belong to your organization" });
+      }
+    }
 
     const updateData = {
       name,
@@ -245,8 +271,8 @@ export const updateEmployee = async (req, res) => {
       email,
       baseSalary:Number(baseSalary),
       overtimeRate:Number(overtimeRate),
-      officeId:Number(officeId),
-      adminId:Number(adminId),
+      officeId:Number(officeId || existingEmployee.officeId),
+      adminId,
       accountNumber,
       ifscCode
     };
@@ -257,7 +283,7 @@ export const updateEmployee = async (req, res) => {
     }
 
     const updatedEmployee = await req.db.employee.update({
-      where: { id: Number(id) },
+      where: { id: existingEmployee.id },
       data: updateData,
     });
 
@@ -285,8 +311,16 @@ export const updateEmployeeStatus = async (req, res) => {
     if (!["ACTIVE", "INACTIVE"].includes(status)) {
       return res.status(400).json({ error: "Invalid status value" });
     }
+
+    const existingEmployee = await req.db.employee.findFirst({
+      where: { id: Number(id), adminId: Number(req.admin.id) }
+    });
+    if (!existingEmployee) {
+      return res.status(404).json({ error: "Employee not found in your organization" });
+    }
+
     const updatedEmployee = await req.db.employee.update({
-      where: { id: Number(id) },
+      where: { id: existingEmployee.id },
       data: { status },
     });
     res.json({ message: `Employee status updated to ${status} for: ${updatedEmployee.name}` });
@@ -301,8 +335,15 @@ export const deleteEmployee = async (req, res) => {
   try {
     const { id } = req.params;
 
+    const existingEmployee = await req.db.employee.findFirst({
+      where: { id: Number(id), adminId: Number(req.admin.id) }
+    });
+    if (!existingEmployee) {
+      return res.status(404).json({ error: "Employee not found in your organization" });
+    }
+
     await req.db.employee.delete({
-      where: { id: Number(id) },
+      where: { id: existingEmployee.id },
     });
 
     res.json({ message: "Employee deleted successfully" });

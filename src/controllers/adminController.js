@@ -83,6 +83,10 @@ export const createAdmin = async (req, res) => {
 export const getAdminById = async (req, res) => {
   try {
     const { id } = req.params;
+    if (req.admin && req.admin.id !== Number(id)) {
+      return res.status(403).json({ error: "Unauthorized access: you can only view your own profile" });
+    }
+
     const admin = await req.db.admin.findUnique({
       where: { id: Number(id) },
       select: { id: true, name: true, phone: true, email: true },
@@ -100,6 +104,10 @@ export const getAdminById = async (req, res) => {
 export const updateAdmin = async (req, res) => {
   try {
     const { id } = req.params;
+    if (req.admin && req.admin.id !== Number(id)) {
+      return res.status(403).json({ error: "Unauthorized access: you can only update your own profile" });
+    }
+
     const { name, email, phone } = req.body;
 
     const data = {};
@@ -124,6 +132,10 @@ export const updateAdmin = async (req, res) => {
 export const deleteAdmin = async (req, res) => {
   try {
     const { id } = req.params;
+    if (req.admin && req.admin.id !== Number(id)) {
+      return res.status(403).json({ error: "Unauthorized access: you can only delete your own profile" });
+    }
+
     await req.db.admin.delete({ where: { id: Number(id) } });
 
     res.json({ message: "Admin deleted successfully" });

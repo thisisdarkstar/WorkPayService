@@ -318,13 +318,13 @@ export const getTodayAttendanceDashboard = async (req, res) => {
       // Use the provided officeId
       targetOfficeId = Number(officeId);
       
-      // Verify office exists
-      const officeExists = await req.db.office.findUnique({
-        where: { id: targetOfficeId },
+      // Verify office exists and belongs to this admin
+      const officeExists = await req.db.office.findFirst({
+        where: { id: targetOfficeId, adminId: Number(req.admin.id) },
       });
       
       if (!officeExists) {
-        return res.status(404).json({ error: "Office not found" });
+        return res.status(404).json({ error: "Office not found or unauthorized" });
       }
     }
 
@@ -332,13 +332,14 @@ export const getTodayAttendanceDashboard = async (req, res) => {
     let employeeIds;
     let officeDetails;
 
+    const adminId = Number(req.admin.id);
+
     if (isAllOffices) {
       // Get all active employees from all offices belonging to this admin
-      const adminId = req.admin?.id;
       const allEmployees = await req.db.employee.findMany({
         where: { 
           status: 'ACTIVE',
-          ...(adminId ? { adminId: Number(adminId) } : {})
+          adminId
         },
         select: { id: true }
       });
@@ -347,21 +348,20 @@ export const getTodayAttendanceDashboard = async (req, res) => {
       officeDetails = { id: "all", name: "All Offices" };
     } else {
       // Get employees for specific office belonging to this admin
-      const adminId = req.admin?.id;
       const officeEmployees = await req.db.employee.findMany({
         where: { 
           officeId: targetOfficeId,
           status: 'ACTIVE',
-          ...(adminId ? { adminId: Number(adminId) } : {})
+          adminId
         },
         select: { id: true }
       });
       
       employeeIds = officeEmployees.map(emp => emp.id);
       
-      // Get office details for response
-      officeDetails = await req.db.office.findUnique({
-        where: { id: targetOfficeId },
+      // Get office details for response (already verified above)
+      officeDetails = await req.db.office.findFirst({
+        where: { id: targetOfficeId, adminId },
         select: { id: true, name: true }
       });
       
@@ -420,8 +420,11 @@ export const getTodayAttendanceDashboard = async (req, res) => {
       name: a.employee.name,
     }));
 
-          // ---- Get all offices ----
-      const offices = await req.db.office.findMany();
+    // ---- Get all offices belonging to THIS admin ----
+    const offices = await req.db.office.findMany({
+      where: { adminId },
+      orderBy: { id: "asc" }
+    });
 
     // ---- Prepare response based on office selection ----
     const response = {
@@ -466,6 +469,14 @@ export const getEmployeeAttendanceByMonthInAdmin = async (req, res) => {
 
     if (!empId || !month || !year) {
       return res.status(400).json({ error: "empId, month, and year are required" });
+    }
+
+    // Verify employee belongs to requesting admin
+    const emp = await req.db.employee.findFirst({
+      where: { id: Number(empId), adminId: Number(req.admin.id) }
+    });
+    if (!emp) {
+      return res.status(404).json({ error: "Employee not found in your organization" });
     }
 
     // Format month and year properly with padding
@@ -536,20 +547,21 @@ export const markAttendanceForAbsentEmployees = async (req, res) => {
 
     if (officeId !== undefined) {
       targetOfficeId = Number(officeId);
-      const officeExists = await req.db.office.findUnique({
-        where: { id: targetOfficeId },
+      const officeExists = await req.db.office.findFirst({
+        where: { id: targetOfficeId, adminId: Number(req.admin.id) },
         select: { id: true, name: true }
       });
       if (!officeExists) {
-        return res.status(404).json({ error: "Office not found" });
+        return res.status(404).json({ error: "Office not found or unauthorized" });
       }
     } else {
       const firstOffice = await req.db.office.findFirst({
+        where: { adminId: Number(req.admin.id) },
         orderBy: { id: 'asc' },
         select: { id: true, name: true }
       });
       if (!firstOffice) {
-        return res.status(404).json({ error: "No offices found" });
+        return res.status(404).json({ error: "No offices found for your account" });
       }
       targetOfficeId = firstOffice.id;
     }
@@ -597,27 +609,28 @@ export const checkBulkAttendanceStatus = async (req, res) => {
     
     if (officeId !== undefined) {
       targetOfficeId = Number(officeId);
-      const officeExists = await req.db.office.findUnique({
-        where: { id: targetOfficeId },
+      const officeExists = await req.db.office.findFirst({
+        where: { id: targetOfficeId, adminId: Number(req.admin.id) },
         select: { id: true, name: true }
       });
       if (!officeExists) {
-        return res.status(404).json({ error: "Office not found" });
+        return res.status(404).json({ error: "Office not found or unauthorized" });
       }
     } else {
       const firstOffice = await req.db.office.findFirst({
+        where: { adminId: Number(req.admin.id) },
         orderBy: { id: 'asc' },
         select: { id: true, name: true }
       });
       if (!firstOffice) {
-        return res.status(404).json({ error: "No offices found" });
+        return res.status(404).json({ error: "No offices found for your account" });
       }
       targetOfficeId = firstOffice.id;
     }
 
     // Get office details
-    const officeDetails = await req.db.office.findUnique({
-      where: { id: targetOfficeId },
+    const officeDetails = await req.db.office.findFirst({
+      where: { id: targetOfficeId, adminId: Number(req.admin.id) },
       select: { 
         id: true, 
         name: true,
@@ -628,10 +641,11 @@ export const checkBulkAttendanceStatus = async (req, res) => {
       }
     });
 
-    // Get all active employees for the target office
+    // Get all active employees for the target office belonging to this admin
     const officeEmployees = await req.db.employee.findMany({
       where: { 
         officeId: targetOfficeId,
+        adminId: Number(req.admin.id),
         status: 'ACTIVE'
       },
       select: { id: true }
@@ -792,14 +806,16 @@ export const getEmployeesByAttendanceStatus = async (req, res) => {
     let targetOfficeId;
     let employeeIds;
     let officeDetails;
+    const adminId = Number(req.admin.id);
 
     if (officeId === "all") {
       isAllOffices = true;
       
-      // Get all active employees from all offices
+      // Get all active employees from all offices belonging to THIS admin
       const allEmployees = await req.db.employee.findMany({
         where: { 
-          status: 'ACTIVE'
+          status: 'ACTIVE',
+          adminId
         },
         select: { id: true }
       });
@@ -810,20 +826,21 @@ export const getEmployeesByAttendanceStatus = async (req, res) => {
       // Use the provided officeId
       targetOfficeId = Number(officeId);
       
-      // Verify office exists
-      const officeExists = await req.db.office.findUnique({
-        where: { id: targetOfficeId },
+      // Verify office exists and belongs to THIS admin
+      const officeExists = await req.db.office.findFirst({
+        where: { id: targetOfficeId, adminId },
       });
       
       if (!officeExists) {
-        return res.status(404).json({ error: "Office not found" });
+        return res.status(404).json({ error: "Office not found or unauthorized" });
       }
 
-      // Get employees for specific office
+      // Get employees for specific office belonging to THIS admin
       const officeEmployees = await req.db.employee.findMany({
         where: { 
           officeId: targetOfficeId,
-          status: 'ACTIVE'
+          status: 'ACTIVE',
+          adminId
         },
         select: { id: true }
       });
@@ -831,8 +848,8 @@ export const getEmployeesByAttendanceStatus = async (req, res) => {
       employeeIds = officeEmployees.map(emp => emp.id);
       
       // Get office details for response
-      officeDetails = await req.db.office.findUnique({
-        where: { id: targetOfficeId },
+      officeDetails = await req.db.office.findFirst({
+        where: { id: targetOfficeId, adminId },
         select: { id: true, name: true }
       });
     }

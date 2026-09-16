@@ -18,10 +18,18 @@ const getISTDateAsUTC = (dateString) => {
     .toDate();
 };
 
-// ✅ Get holidays for current year, grouped by month
+// ✅ Get holidays for current year, grouped by month (strictly scoped by adminId)
 export const getHolidaysByYear = async (req, res) => {
   try {
-    const adminId = req.admin?.id;
+    let adminId = req.admin?.id;
+    if (!adminId && req.user) {
+      adminId = req.user.role === "admin" ? req.user.id : req.user.dbUser?.adminId;
+    }
+
+    if (!adminId) {
+      return res.status(401).json({ error: "Unauthorized: admin identification missing" });
+    }
+
     const now = new Date();
     const year = now.getFullYear();
 
@@ -35,7 +43,7 @@ export const getHolidaysByYear = async (req, res) => {
           gte: startOfYear,
           lt: endOfYear,
         },
-        ...(adminId ? { adminId: Number(adminId) } : {})
+        adminId: Number(adminId),
       },
       orderBy: { date: "asc" },
     });
@@ -115,12 +123,14 @@ export const addHoliday = async (req, res) => {
       select: { id: true }
     });
 
-    // Check if any attendance records already exist for this date
-    const existingAttendance = await req.db.attendance.findMany({
+    // Check if any attendance records already exist for this date among THIS admin's employees
+    const employeeIds = employees.map(e => e.id);
+    const existingAttendance = employeeIds.length > 0 ? await req.db.attendance.findMany({
       where: {
-        date: holidayDateUTC
+        date: holidayDateUTC,
+        empId: { in: employeeIds }
       }
-    });
+    }) : [];
 
     if (existingAttendance.length > 0) {
       return res.status(400).json({ 
@@ -205,25 +215,23 @@ export const deleteHoliday = async (req, res) => {
     console.log("DEBUG - Holiday date UTC:", holidayDate);
     console.log("DEBUG - Holiday date IST:", toISTDateString(holidayDate));
 
-    // Find all attendance records with HOLIDAY status for this date
-    const holidayAttendances = await req.db.attendance.findMany({
-      where: {
-        date: holidayDate,
-        status: "HOLIDAY"
-      }
+    // Find all attendance records with HOLIDAY status for this date belonging to THIS admin's employees
+    const adminEmployees = await req.db.employee.findMany({
+      where: { adminId: req.admin.id },
+      select: { id: true }
     });
-
-    console.log(`DEBUG - Found ${holidayAttendances.length} holiday attendance records to delete`);
+    const adminEmployeeIds = adminEmployees.map(e => e.id);
 
     // Use transaction to ensure both holiday and attendance records are deleted atomically
     const result = await req.db.$transaction(async (tx) => {
-      // Delete all attendance records with HOLIDAY status for this date
-      const deletedAttendances = await tx.attendance.deleteMany({
+      // Delete attendance records with HOLIDAY status for this date belonging to THIS admin's employees
+      const deletedAttendances = adminEmployeeIds.length > 0 ? await tx.attendance.deleteMany({
         where: {
           date: holidayDate,
-          status: "HOLIDAY"
+          status: "HOLIDAY",
+          empId: { in: adminEmployeeIds }
         }
-      });
+      }) : { count: 0 };
 
       // Delete the holiday
       await tx.holiday.delete({ where: { id: Number(id) } });
