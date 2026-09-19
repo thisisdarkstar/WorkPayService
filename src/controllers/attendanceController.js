@@ -443,6 +443,10 @@ export const getTodayAttendanceDashboard = async (req, res) => {
     const totalLate = counts["LATE"] || 0;
     const totalPresent = counts["PRESENT"] || 0;
     const totalAbsent = counts["ABSENT"] || 0;
+    // ATT-03: surface leave & holiday counts too, so the admin sees a complete
+    // picture of where every employee is today (present/late/absent/leave/holiday).
+    const totalLeave = counts["LEAVE"] || 0;
+    const totalHoliday = counts["HOLIDAY"] || 0;
 
     // ---- Absent Employees List ----
     const absentees = await req.db.attendance.findMany({
@@ -480,6 +484,8 @@ export const getTodayAttendanceDashboard = async (req, res) => {
       totalLate,
       totalPresent,
       totalAbsent,
+      totalLeave,
+      totalHoliday,
       absentList,
       offices
     };
@@ -743,7 +749,9 @@ export const checkBulkAttendanceStatus = async (req, res) => {
       stats[stat.status] = stat._count.status;
     });
 
-    const totalRecorded = stats.PRESENT + stats.ABSENT + stats.LATE + stats.LEAVE;
+    // ATT-05: include HOLIDAY so employees with a holiday record are counted as
+    // "recorded" and don't inflate the pending/remaining count on holidays.
+    const totalRecorded = stats.PRESENT + stats.ABSENT + stats.LATE + stats.LEAVE + stats.HOLIDAY;
     const remainingEmployees = totalEmployeesInOffice - totalRecorded;
 
     // Count pending clockouts
@@ -825,10 +833,12 @@ export const getEmployeesByAttendanceStatus = async (req, res) => {
     console.log(officeId,status)
 
     // Validate status parameter
-    const validStatuses = ["PRESENT", "ABSENT", "LATE"];
+    // ATT-04: allow drilling into LEAVE and HOLIDAY cohorts too, not just
+    // PRESENT/ABSENT/LATE, so the admin can list every status shown on the dashboard.
+    const validStatuses = ["PRESENT", "ABSENT", "LATE", "LEAVE", "HOLIDAY"];
     if (!status || !validStatuses.includes(status.toUpperCase())) {
       return res.status(400).json({ 
-        error: "Invalid status. Must be one of: PRESENT, ABSENT, LATE" 
+        error: "Invalid status. Must be one of: PRESENT, ABSENT, LATE, LEAVE, HOLIDAY" 
       });
     }
 
