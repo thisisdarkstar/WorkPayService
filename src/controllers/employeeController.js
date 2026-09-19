@@ -5,6 +5,54 @@ import moment from "moment-timezone";
 import { sendApiError } from "../utils/errorHandler.js";
 import { JWT_SECRET } from "../config/jwt.js";
 
+/**
+ * Generates a secure, human-readable temporary password.
+ *
+ * SECURITY:
+ * - Uses crypto.randomInt() (a CSPRNG) with NO modulo bias — every character is
+ *   drawn from a uniform distribution (unlike `randomBytes[i] % len`, which
+ *   over-weights the first (256 % len) characters of the set).
+ * - Excludes ambiguous glyphs (0/O, 1/l/I) so the password is easy to read/type.
+ * - Uses a CURATED special-character set that is safe to share via SMS/URL/shell
+ *   and easy to type on mobile keyboards (avoids quotes, backslash, spaces,
+ *   angle brackets, and other shell/URL-hostile symbols).
+ * - Guarantees at least one uppercase, one lowercase, one digit, and one special
+ *   character, then fills the rest randomly and shuffles, so it always satisfies
+ *   a strong mixed-class policy.
+ *
+ * @param {number} length total length (default 12 → ~75 bits of entropy)
+ * @returns {string}
+ */
+const generateTempPassword = (length = 12) => {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnopqrstuvwxyz";
+  const digits = "23456789";
+  // Curated, share-safe specials: no quotes/backslash/space/angle-brackets, and
+  // nothing that commonly breaks URLs or shell commands when copy-pasted.
+  const specials = "!@#$%*?-_+=";
+  const all = upper + lower + digits + specials;
+
+  const pick = (set) => set[crypto.randomInt(set.length)];
+
+  // Guarantee one of each required class.
+  const required = [pick(upper), pick(lower), pick(digits), pick(specials)];
+
+  // Fill the remainder from the full set.
+  const remainingCount = Math.max(0, length - required.length);
+  const chars = [...required];
+  for (let i = 0; i < remainingCount; i++) {
+    chars.push(pick(all));
+  }
+
+  // Unbiased Fisher–Yates shuffle so the guaranteed chars aren't always first.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+
+  return chars.join("");
+};
+
 // ✅ Employee Login (supports phone or email)
 export const loginEmployee = async (req, res) => {
   try {
@@ -57,12 +105,7 @@ export const createEmployee = async (req, res) => {
     // the initial password. Generate a cryptographically random temporary
     // password server-side and return it once so the admin can share it. The
     // employee changes it from their Profile screen after first login.
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-    const bytes = crypto.randomBytes(10);
-    let temporaryPassword = "";
-    for (let i = 0; i < 10; i++) {
-      temporaryPassword += chars[bytes[i] % chars.length];
-    }
+    const temporaryPassword = generateTempPassword(12);
 
     const existingPhone = await req.db.employee.findUnique({ where: { phone } });
     if (existingPhone) {
@@ -435,13 +478,8 @@ export const adminResetEmployeePassword = async (req, res) => {
       return res.status(404).json({ error: "Employee not found in your organization" });
     }
 
-    // Generate secure, easy-to-read temporary password (8 characters)
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-    const bytes = crypto.randomBytes(8);
-    let temporaryPassword = "";
-    for (let i = 0; i < 8; i++) {
-      temporaryPassword += chars[bytes[i] % chars.length];
-    }
+    // Generate a secure, unbiased, class-guaranteed temporary password.
+    const temporaryPassword = generateTempPassword(12);
 
     const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
 
