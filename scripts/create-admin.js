@@ -137,12 +137,12 @@ async function main() {
         console.log(`  [3/4] Admin Phone: ${phone}`);
       }
 
-      if (!password || password.length < 6) {
+      if (!password || password.length < 8) {
         password = await promptField(
           rl,
-          "  [4/4] Admin Password (min 6 chars)",
-          (p) => p.length >= 6,
-          "Password must be at least 6 characters."
+          "  [4/4] Admin Password (min 8 chars)",
+          (p) => p.length >= 8,
+          "Password must be at least 8 characters."
         );
       } else {
         console.log(`  [4/4] Admin Password: [Provided via flag]`);
@@ -158,8 +158,8 @@ async function main() {
         console.error("❌ Error: Invalid phone format provided via --phone.");
         process.exit(1);
       }
-      if (password.length < 6) {
-        console.error("❌ Error: Password provided via --password must be at least 6 characters.");
+      if (typeof password !== "string" || password.length < 8) {
+        console.error("❌ Error: Password provided via --password must be at least 8 characters.");
         process.exit(1);
       }
     }
@@ -263,6 +263,7 @@ async function main() {
         email,
         phone,
         password: hashedPassword,
+        passwordChangedAt: new Date(),
       },
       select: {
         id: true,
