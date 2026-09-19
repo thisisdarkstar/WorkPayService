@@ -277,10 +277,15 @@ export const finalizeOfficeAttendance = async (db, officeId, requestedDate = nul
     const recordedEmpIds = new Set(existingRecords.map((r) => r.empId));
     const employeesWithoutRecord = activeEmployees.filter((e) => {
       if (recordedEmpIds.has(e.id)) return false;
-      // Do not mark absent or penalize if employee's joined date is strictly after the target date
+      // Do NOT mark absent or deduct salary on or before the employee's joining
+      // day. An employee who joined on the target date (or later) must never be
+      // penalized as "absent" for a day they had not started work. They only
+      // become eligible for absence marking the day AFTER their join date.
       if (e.joinedDate) {
         const empJoinedDay = moment.tz(e.joinedDate, "Asia/Kolkata").startOf("day");
-        if (targetMomentIST.isBefore(empJoinedDay, "day")) return false;
+        if (targetMomentIST.clone().startOf("day").isSameOrBefore(empJoinedDay, "day")) {
+          return false;
+        }
       }
       return true;
     });
