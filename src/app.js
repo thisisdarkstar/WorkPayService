@@ -46,7 +46,30 @@ app.set("trust proxy", 1);
 
 // Security headers (keep CSP disabled for swagger-ui assets)
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors());
+
+// M-01: Restrict CORS to explicitly allowed origins.
+// Native mobile apps send no Origin header, so requests with no origin are
+// allowed (this is the primary WorkPay client). Browser origins must be
+// whitelisted via the ALLOWED_ORIGINS env var (comma-separated). If unset,
+// only the production API host is permitted for browser-based access.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "https://work-pay-service.vercel.app")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow non-browser clients (mobile app, curl, server-to-server) that
+      // send no Origin header.
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-super-admin-key", "x-cron-secret", "x-transaction-id"],
+  })
+);
 
 // 1️⃣ Initialize Request Context FIRST for every single hit & set X-Transaction-Id
 app.use((req, res, next) => {
@@ -148,7 +171,14 @@ app.use((err, req, res, next) => {
       stack: err.stack,
     },
   });
-  res.status(500).json({ error: "Internal Server Error", message: err.message, txnId });
+  // H-05: Never leak raw exception details (which can include Prisma error text
+  // exposing table/column/constraint names) to clients in production.
+  const isProduction = process.env.NODE_ENV === "production";
+  res.status(500).json({
+    error: "Internal Server Error",
+    ...(isProduction ? {} : { message: err.message }),
+    txnId,
+  });
 });
 
 export default app;

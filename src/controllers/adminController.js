@@ -1,8 +1,7 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { sendApiError } from "../utils/errorHandler.js";
-
-const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
+import { JWT_SECRET } from "../config/jwt.js";
 
 // ✅ Admin Login (supports email or phone)
 export const loginAdmin = async (req, res) => {
@@ -30,7 +29,7 @@ export const loginAdmin = async (req, res) => {
     const token = jwt.sign(
       { id: admin.id, email: admin.email, phone: admin.phone, role: "admin" },
       JWT_SECRET,
-      { expiresIn: "30d" }
+      { expiresIn: "7d" }
     );
 
     res.json({ message: "Login successful", token });
@@ -151,16 +150,32 @@ export const deleteAdmin = async (req, res) => {
 };
 
 // Reset password with Phone
+// SECURITY (C-02): Previously this endpoint let anyone reset an admin password
+// knowing only the phone number, enabling full account takeover. It is now gated
+// behind SUPER_ADMIN_SECRET_KEY (same trust level as HTTP admin creation).
 export const resetPasswordWithPhone = async (req, res) => {
   try {
+    const superAdminSecret = process.env.SUPER_ADMIN_SECRET_KEY;
+    const providedKey = req.headers["x-super-admin-key"];
+
+    if (!superAdminSecret || providedKey !== superAdminSecret) {
+      return res.status(403).json({
+        error: "Forbidden: Admin password reset requires a valid 'x-super-admin-key' header. Please use the internal CLI script or contact the super administrator.",
+      });
+    }
+
     const { phone, newPassword } = req.body;
     if (!phone || !newPassword) return res.status(400).json({ error: "Phone and new password required" });
+
+    if (typeof newPassword !== "string" || newPassword.length < 8) {
+      return res.status(400).json({ error: "New password must be at least 8 characters" });
+    }
 
     const admin = await req.db.admin.findUnique({ where: { phone } });
     if (!admin) return res.status(404).json({ error: "Admin not found" });
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    await req.db.admin.update({ where: { phone }, data: { password: hashedPassword } });
+    await req.db.admin.update({ where: { phone }, data: { password: hashedPassword, passwordChangedAt: new Date() } });
 
     res.json({ message: "Password reset successfully" });
   } catch (error) {

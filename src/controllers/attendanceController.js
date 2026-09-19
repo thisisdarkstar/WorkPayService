@@ -10,6 +10,47 @@ const toISTString = (utcDate) =>
 // Get current UTC time
 const getCurrentUTC = () => new Date();
 
+// Haversine distance (in meters) between two lat/lng coordinates.
+// Used for SERVER-SIDE geofence enforcement so a spoofed/modified client
+// cannot mark attendance from outside the office perimeter.
+const distanceInMeters = (lat1, lon1, lat2, lon2) => {
+  const R = 6371e3; // Earth radius in meters
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+// Validates the client-supplied location against the office geofence.
+// Returns { ok: true } when inside range, or { ok: false, message } otherwise.
+const validateGeofence = (location, office) => {
+  const lat = Number(location?.latitude);
+  const lon = Number(location?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return { ok: false, message: "Location is required to mark attendance. Please enable location and try again." };
+  }
+
+  const range = Number(office?.range);
+  if (!Number.isFinite(range) || range <= 0) {
+    return { ok: false, message: "Office geofence is not configured. Please contact your administrator." };
+  }
+
+  const distance = distanceInMeters(lat, lon, office.latitude, office.longitude);
+  if (distance > range) {
+    return {
+      ok: false,
+      message: `You must be within ${range} meters of the office to mark attendance. You are approximately ${Math.round(distance)} meters away.`,
+    };
+  }
+
+  return { ok: true };
+};
+
 // Get start & end of today in IST, converted to UTC for querying
 const getISTRangeUTC = (date = new Date()) => {
   const start = moment.tz(date, "Asia/Kolkata").startOf("day");
@@ -50,7 +91,7 @@ const hasApprovedLeaveForDate = async (db, empId, targetDateUTC) => {
 export const handleAttendance = async (req, res) => {
   try {
     const employeeId = req.employee.id;
-    const { type } = req.body;
+    const { type, location } = req.body;
     if (!employeeId || !type)
       return res.status(400).json({ error: "employeeId and type are required" });
 
@@ -68,18 +109,21 @@ export const handleAttendance = async (req, res) => {
     });
     if (!office) return res.status(404).json({ error: "Office details not found" });
 
+    // 🛡️ SERVER-SIDE GEOFENCE ENFORCEMENT (SEC-002)
+    // The client also checks distance, but that is advisory only. A modified
+    // client or spoofed GPS could bypass it, so we re-validate here against the
+    // office's authoritative coordinates and radius before recording anything.
+    const geofence = validateGeofence(location, office);
+    if (!geofence.ok) {
+      return res.status(403).json({ error: geofence.message });
+    }
+
     // Convert stored office times to today's UTC times
-    console.log("DEBUG - Stored office.checkin:", office.checkin);
-    console.log("DEBUG - Stored office.checkout:", office.checkout);
     
     const officeCheckinUTC = getTodayOfficeTimeUTC(office.checkin);
     const officeCheckoutUTC = getTodayOfficeTimeUTC(office.checkout);
 
     // Debug logs to verify office times
-    console.log("DEBUG - Office checkin UTC:", officeCheckinUTC);
-    console.log("DEBUG - Office checkout UTC:", officeCheckoutUTC);
-    console.log("DEBUG - Office checkin IST:", toISTString(officeCheckinUTC));
-    console.log("DEBUG - Office checkout IST:", toISTString(officeCheckoutUTC));
 
     // Check if office attendance is already finalized for today in IST
     if (office.lastFinalized) {
@@ -153,26 +197,33 @@ export const handleAttendance = async (req, res) => {
       const totalOfficeMinutes = Math.floor((officeCheckoutUTC - officeCheckinUTC) / (1000 * 60));
       const overtimeMinutes = totalWorkedMinutes > totalOfficeMinutes ? totalWorkedMinutes - totalOfficeMinutes : 0;
 
-      attendance = await req.db.attendance.update({
-        where: { id: attendance.id },
-        data: { checkOutTime: nowUTC, overTime: overtimeMinutes, employee: { connect: { id: Number(employeeId) } } },
-      });
+      // H-03: Perform the checkout update and the overtime payout in a single
+      // atomic transaction. Previously these were two separate writes, so a
+      // crash between them could leave the shift closed with no overtime
+      // transaction, silently losing the employee's earned overtime pay.
+      const overtimeHours = overtimeMinutes / 60;
+      const overtimePay = overtimeMinutes > 0 ? overtimeHours * employee.overtimeRate : 0;
 
-      // Create overtime transaction if applicable
-      if (overtimeMinutes > 0) {
-        const overtimeHours = overtimeMinutes / 60;
-        const overtimePay = overtimeHours * employee.overtimeRate;
-
-        await req.db.transaction.create({
-          data: {
-            empId: Number(employeeId),
-            amount: overtimePay,
-            payType: "OVERTIME",
-            description: `Overtime payment for ${overtimeHours.toFixed(2)} hr(s) on ${toISTString(nowUTC).split(" ")[0]}`,
-            date: nowUTC,
-          },
+      attendance = await req.db.$transaction(async (tx) => {
+        const updated = await tx.attendance.update({
+          where: { id: attendance.id },
+          data: { checkOutTime: nowUTC, overTime: overtimeMinutes, employee: { connect: { id: Number(employeeId) } } },
         });
-      }
+
+        if (overtimeMinutes > 0) {
+          await tx.transaction.create({
+            data: {
+              empId: Number(employeeId),
+              amount: overtimePay,
+              payType: "OVERTIME",
+              description: `Overtime payment for ${overtimeHours.toFixed(2)} hr(s) on ${toISTString(nowUTC).split(" ")[0]}`,
+              date: nowUTC,
+            },
+          });
+        }
+
+        return updated;
+      });
 
       return res.json({
         message: `Check-out done at ${toISTString(nowUTC)}`,
@@ -224,19 +275,12 @@ export const getEmployeeAttendanceByMonth = async (req, res) => {
     if (isCurrentMonth) {
       const todayEndIST = currentDateIST.clone().endOf("day");
       monthEndIST = todayEndIST; // Use today's end instead of month end
-      console.log("DEBUG - Current month detected, limiting to today");
-      console.log("DEBUG - Month end changed from full month to:", monthEndIST.format("YYYY-MM-DD HH:mm:ss"));
     }
 
     // 2. Convert to UTC for querying
     const monthStartUTC = monthStartIST.utc().toDate();
     const monthEndUTC = monthEndIST.utc().toDate();
 
-    console.log("DEBUG - Query range:");
-    console.log("DEBUG - Start IST:", monthStartIST.format("YYYY-MM-DD HH:mm:ss"));
-    console.log("DEBUG - End IST:", monthEndIST.format("YYYY-MM-DD HH:mm:ss"));
-    console.log("DEBUG - Start UTC:", monthStartUTC);
-    console.log("DEBUG - End UTC:", monthEndUTC);
 
     // 3. Fetch attendance records
     const attendanceRecords = await req.db.attendance.findMany({
@@ -280,8 +324,10 @@ export const getEmployeeAttendanceByMonth = async (req, res) => {
 // ✅ Dashboard Attendance API (IST-aware with Office filtering and "all" support)
 export const getTodayAttendanceDashboard = async (req, res) => {
   try {
-    // Opportunistically run auto-finalize check in background if any office deadline passed
-    checkAndRunAutoFinalize(req.db).catch(err => logger.error('[AutoFinalize Background Error]', { error: err?.message, stack: err?.stack }));
+    // Opportunistically run auto-finalize check in background if any office deadline passed.
+    // M-13: Scope to the requesting admin's offices so one admin's dashboard visit
+    // does not trigger finalization work across other admins' offices.
+    checkAndRunAutoFinalize(req.db, req.admin?.id).catch(err => logger.error('[AutoFinalize Background Error]', { error: err?.message, stack: err?.stack }));
 
     let targetOfficeId;
     let isAllOffices = false;
@@ -735,8 +781,29 @@ export const checkBulkAttendanceStatus = async (req, res) => {
 };
 
 // Cron auto-finalize handler (invoked by scheduler or Vercel Cron)
+// SECURITY (C-01): This endpoint triggers bulk attendance finalization across
+// all offices, which creates ABSENT records and salary DEDUCTION transactions.
+// It must never be publicly callable. Vercel Cron sends the configured
+// CRON_SECRET as a Bearer token; we require it (and also accept the same value
+// via an x-cron-secret header for non-Vercel schedulers).
 export const cronAutoFinalize = async (req, res) => {
   try {
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret) {
+      // Fail closed: without a configured secret we refuse to run rather than
+      // leaving the endpoint open to anonymous callers.
+      return res.status(503).json({ error: "Cron secret is not configured on the server." });
+    }
+
+    const authHeader = req.headers["authorization"] || "";
+    const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    const headerSecret = req.headers["x-cron-secret"];
+    const providedSecret = bearerToken || headerSecret;
+
+    if (providedSecret !== cronSecret) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
     const results = await checkAndRunAutoFinalize(req.db);
     res.json({
       message: "Auto-finalize check completed",

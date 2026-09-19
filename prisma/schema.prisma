@@ -52,6 +52,7 @@ model Admin {
   phone     String     @unique
   email     String     @unique
   password  String
+  passwordChangedAt DateTime?
   employees Employee[]
   offices   Office[]
   holidays  Holiday[]
@@ -91,6 +92,7 @@ model Employee {
   email         String               @unique
   joinedDate    DateTime?
   password      String
+  passwordChangedAt DateTime?
   baseSalary    Int
   overtimeRate  Int
   leaveBalance  Int                  @default(10) // initial balance, will decrease as leaves are approved

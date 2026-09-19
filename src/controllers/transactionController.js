@@ -91,6 +91,59 @@ export const addTransaction = async (req, res) => {
   }
 };
 
+// ✅ Revert a settled salary for an employee in a given month (admin)
+// Deletes ONLY the SALARY transaction for the target month, leaving other
+// transactions (advance, deduction, bonus, overtime) intact. Used to undo an
+// accidental "Settle Salary" click.
+export const revertSalary = async (req, res) => {
+  try {
+    const { empId, month, year } = req.body;
+
+    if (!empId || !month || !year) {
+      return res.status(400).json({ error: "empId, month and year are required" });
+    }
+
+    const targetMonth = Number(month);
+    const targetYear = Number(year);
+
+    // Verify the employee belongs to this admin's organization (ownership check).
+    const employee = await req.db.employee.findFirst({
+      where: { id: Number(empId), adminId: Number(req.admin.id) },
+    });
+    if (!employee) {
+      return res.status(404).json({ error: "Employee not found in your organization" });
+    }
+
+    const monthStartUTC = moment.tz([targetYear, targetMonth - 1, 1], "Asia/Kolkata").startOf("month").utc().toDate();
+    const monthEndUTC = moment.tz([targetYear, targetMonth - 1, 1], "Asia/Kolkata").endOf("month").utc().toDate();
+    const monthName = moment.tz([targetYear, targetMonth - 1, 1], "Asia/Kolkata").format("MMMM");
+
+    // Find the settled SALARY transaction for that month.
+    const salaryTxn = await req.db.transaction.findFirst({
+      where: {
+        empId: Number(empId),
+        payType: "SALARY",
+        date: { gte: monthStartUTC, lte: monthEndUTC },
+      },
+    });
+
+    if (!salaryTxn) {
+      return res.status(404).json({
+        error: `No settled salary found for ${employee.name} in ${monthName} ${targetYear}`,
+      });
+    }
+
+    await req.db.transaction.delete({ where: { id: salaryTxn.id } });
+
+    res.json({
+      message: `Salary settlement reverted for ${employee.name} (${monthName} ${targetYear})`,
+      revertedTransactionId: salaryTxn.id,
+    });
+  } catch (error) {
+    return sendApiError(res, error, 500, "Failed to revert salary");
+  }
+};
+
 // ✅ Get employee transactions by year (IST-aware)
 export const getEmployeeTransactions = async (req, res) => {
   try {

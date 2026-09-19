@@ -69,6 +69,10 @@ export const getHolidaysByYear = async (req, res) => {
       holidays: grouped[month],
     }));
 
+    // Caching: holidays change rarely but are fetched on every Leave screen
+    // focus. A short private cache reduces redundant round-trips without risking
+    // cross-user leakage (response is admin-specific). No external cache needed.
+    res.setHeader("Cache-Control", "private, max-age=3600");
     res.json(response);
   } catch (error) {
     return sendApiError(res, error, 500, "Failed to fetch holidays");
@@ -95,9 +99,6 @@ export const addHoliday = async (req, res) => {
     // This matches how attendance stores dates
     const holidayDateUTC = getISTDateAsUTC(onlyDate);
 
-    console.log("DEBUG - Input IST date:", onlyDate);
-    console.log("DEBUG - Stored UTC date:", holidayDateUTC);
-    console.log("DEBUG - Converted back to IST:", toISTDateString(holidayDateUTC));
 
     // Check if holiday already exists on this date for THIS admin
     const existingHoliday = await req.db.holiday.findFirst({
@@ -172,9 +173,6 @@ export const addHoliday = async (req, res) => {
       };
     });
 
-    console.log(`DEBUG - Created holiday and attendance for ${result.attendanceCount} employees`);
-    console.log(`DEBUG - Holiday date UTC: ${result.holiday.date}`);
-    console.log(`DEBUG - Holiday date IST: ${toISTDateString(result.holiday.date)}`);
 
     res.json({
       message: `Holiday added successfully and attendance created for ${result.attendanceCount} employees`,
@@ -210,9 +208,6 @@ export const deleteHoliday = async (req, res) => {
     // Get the holiday date for finding associated attendance records
     const holidayDate = holiday.date;
 
-    console.log("DEBUG - Deleting holiday:", holiday.description);
-    console.log("DEBUG - Holiday date UTC:", holidayDate);
-    console.log("DEBUG - Holiday date IST:", toISTDateString(holidayDate));
 
     // Find all attendance records with HOLIDAY status for this date belonging to THIS admin's employees
     const adminEmployees = await req.db.employee.findMany({
@@ -240,7 +235,6 @@ export const deleteHoliday = async (req, res) => {
       };
     });
 
-    console.log(`DEBUG - Deleted holiday and ${result.attendanceDeleted} attendance records`);
 
     res.json({ 
       message: `Holiday deleted successfully and ${result.attendanceDeleted} attendance records removed`,

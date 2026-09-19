@@ -3,8 +3,7 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import moment from "moment-timezone";
 import { sendApiError } from "../utils/errorHandler.js";
-
-const JWT_SECRET = process.env.JWT_SECRET || "supersecret";
+import { JWT_SECRET } from "../config/jwt.js";
 
 // ✅ Employee Login (supports phone or email)
 export const loginEmployee = async (req, res) => {
@@ -35,7 +34,7 @@ export const loginEmployee = async (req, res) => {
     const token = jwt.sign(
       { id: employee.id, email: employee.email, role: "employee" },
       JWT_SECRET,
-      { expiresIn: "30d" }
+      { expiresIn: "7d" }
     );
 
     res.json({ message: "Employee login successful", token });
@@ -48,10 +47,21 @@ export const loginEmployee = async (req, res) => {
 export const createEmployee = async (req, res) => {
   try {
     const adminId = req.admin.id; // from adminAuth middleware
-    const { name, phone, email, password, baseSalary, overtimeRate, officeId, joinedDate,accountNumber,ifscCode } = req.body;
+    const { name, phone, email, baseSalary, overtimeRate, officeId, joinedDate,accountNumber,ifscCode } = req.body;
 
-    if (!name || !phone || !email || !password || !baseSalary || !overtimeRate || !officeId || !adminId) {
+    if (!name || !phone || !email || !baseSalary || !overtimeRate || !officeId || !adminId) {
       return res.status(400).json({ error: "All required fields must be provided" });
+    }
+
+    // SECURITY (C-03): Never use a predictable value (like the phone number) as
+    // the initial password. Generate a cryptographically random temporary
+    // password server-side and return it once so the admin can share it. The
+    // employee changes it from their Profile screen after first login.
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    const bytes = crypto.randomBytes(10);
+    let temporaryPassword = "";
+    for (let i = 0; i < 10; i++) {
+      temporaryPassword += chars[bytes[i] % chars.length];
     }
 
     const existingPhone = await req.db.employee.findUnique({ where: { phone } });
@@ -72,16 +82,14 @@ export const createEmployee = async (req, res) => {
       return res.status(400).json({ error: "Office not found or does not belong to your organization" });
     }
 
-    // hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // hash the generated temporary password
+    const hashedPassword = await bcrypt.hash(temporaryPassword, 10);
 
     // Get current UTC time and convert to IST to get today's date
     const nowUTC = new Date();
     const todayIST = moment.utc(nowUTC).tz("Asia/Kolkata").startOf('day');
     const todayUTC = todayIST.utc().toDate();
 
-    console.log("DEBUG - Employee creation date IST:", todayIST.format("YYYY-MM-DD"));
-    console.log("DEBUG - Employee creation date UTC:", todayUTC);
 
     // Get all holidays that are on or after TODAY (employee creation date) belonging to THIS admin
     const upcomingHolidays = await req.db.holiday.findMany({
@@ -96,7 +104,6 @@ export const createEmployee = async (req, res) => {
       }
     });
 
-    console.log(`DEBUG - Found ${upcomingHolidays.length} holidays on or after today`);
 
     // Use transaction to create employee and holiday attendance records atomically
     const result = await req.db.$transaction(async (tx) => {
@@ -117,7 +124,6 @@ export const createEmployee = async (req, res) => {
         },
       });
 
-      console.log(`DEBUG - Created employee: ${employee.name} (ID: ${employee.id})`);
 
       // Create attendance records for all upcoming holidays
       let holidayAttendanceCount = 0;
@@ -135,7 +141,6 @@ export const createEmployee = async (req, res) => {
         });
 
         holidayAttendanceCount = holidayAttendanceRecords.count;
-        console.log(`DEBUG - Created ${holidayAttendanceCount} holiday attendance records for employee`);
       }
 
       return { employee, holidayAttendanceCount };
@@ -153,6 +158,7 @@ export const createEmployee = async (req, res) => {
 
     res.status(201).json({
       message: "Employee created successfully", // Removed the variable from here to stop the Symbol error
+      temporaryPassword, // C-03: returned once so admin can securely share it
       data: {
         id: result.employee.id,
         name: result.employee.name,
@@ -256,17 +262,37 @@ export const updateEmployee = async (req, res) => {
       }
     }
 
-    const updateData = {
-      name,
-      phone,
-      email,
-      baseSalary:Number(baseSalary),
-      overtimeRate:Number(overtimeRate),
-      officeId:Number(officeId || existingEmployee.officeId),
-      adminId,
-      accountNumber,
-      ifscCode
-    };
+    // H-06: Build the update payload from only the fields that were actually
+    // provided. Previously every field was assigned unconditionally, so a
+    // partial update (e.g. sending only some fields) would coerce missing
+    // numeric fields via Number(undefined) === NaN and could corrupt salary /
+    // overtime data. We now update a field only when it is present.
+    const updateData = { adminId };
+    if (name !== undefined) updateData.name = name;
+    if (phone !== undefined) updateData.phone = phone;
+    if (email !== undefined) updateData.email = email;
+    if (accountNumber !== undefined) updateData.accountNumber = accountNumber;
+    if (ifscCode !== undefined) updateData.ifscCode = ifscCode;
+
+    if (baseSalary !== undefined) {
+      const parsedBaseSalary = Number(baseSalary);
+      if (Number.isNaN(parsedBaseSalary)) {
+        return res.status(400).json({ error: "Invalid base salary" });
+      }
+      updateData.baseSalary = parsedBaseSalary;
+    }
+
+    if (overtimeRate !== undefined) {
+      const parsedOvertimeRate = Number(overtimeRate);
+      if (Number.isNaN(parsedOvertimeRate)) {
+        return res.status(400).json({ error: "Invalid overtime rate" });
+      }
+      updateData.overtimeRate = parsedOvertimeRate;
+    }
+
+    if (officeId !== undefined) {
+      updateData.officeId = Number(officeId);
+    }
 
     // If password provided, hash it
     if (password) {
@@ -351,6 +377,15 @@ export const resetPasswordWithJWT = async (req, res) => {
       return res.status(400).json({ error: "Both current and new password required" });
     }
 
+    // M-05: Enforce a minimum password strength on the backend so it cannot be
+    // bypassed by direct API calls that skip the client-side check.
+    if (typeof newPassword !== "string" || newPassword.length < 8) {
+      return res.status(400).json({ error: "New password must be at least 8 characters" });
+    }
+    if (newPassword === currentPassword) {
+      return res.status(400).json({ error: "New password cannot be the same as the current password" });
+    }
+
     // req.employee comes from employeeAuth middleware
     const employee = await req.db.employee.findUnique({
       where: { id: req.employee.id },
@@ -369,7 +404,7 @@ export const resetPasswordWithJWT = async (req, res) => {
 
     await req.db.employee.update({
       where: { id: employee.id },
-      data: { password: hashedPassword },
+      data: { password: hashedPassword, passwordChangedAt: new Date() },
     });
 
     res.json({ message: "Password updated successfully" });
@@ -412,7 +447,7 @@ export const adminResetEmployeePassword = async (req, res) => {
 
     await req.db.employee.update({
       where: { id: employee.id },
-      data: { password: hashedPassword },
+      data: { password: hashedPassword, passwordChangedAt: new Date() },
     });
 
     res.json({
@@ -551,9 +586,25 @@ export const updateBankDetails = async (req, res) => {
       const employeeId = req.employee.id;
     const { accountNumber,ifscCode } = req.body;
 
+    // M-06: Validate bank details before persisting. Invalid values would
+    // otherwise be stored and cause downstream payment failures.
+    if (!accountNumber || !ifscCode) {
+      return res.status(400).json({ error: "Account number and IFSC code are required" });
+    }
+
+    const normalizedAccount = String(accountNumber).trim();
+    const normalizedIfsc = String(ifscCode).trim().toUpperCase();
+
+    if (!/^\d{9,18}$/.test(normalizedAccount)) {
+      return res.status(400).json({ error: "Invalid account number. It must be 9 to 18 digits." });
+    }
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(normalizedIfsc)) {
+      return res.status(400).json({ error: "Invalid IFSC code format." });
+    }
+
     const updateData = {
-      accountNumber,
-      ifscCode
+      accountNumber: normalizedAccount,
+      ifscCode: normalizedIfsc
     };
 
 

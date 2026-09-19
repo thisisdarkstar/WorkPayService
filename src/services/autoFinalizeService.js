@@ -360,14 +360,18 @@ export const finalizeOfficeAttendance = async (db, officeId, requestedDate = nul
  * - Else: triggers at office.checkout + 3 hours (fallback safety feature).
  * - During overnight window (midnight to shift checkin), will safely auto-finalize yesterday's shift if unfinalized.
  */
-export const checkAndRunAutoFinalize = async (db) => {
+export const checkAndRunAutoFinalize = async (db, adminId = null) => {
   try {
     const nowUTC = getCurrentUTC();
     const nowIST = moment.tz(nowUTC, "Asia/Kolkata");
     const todayIST = nowIST.format("YYYY-MM-DD");
     const yesterdayIST = nowIST.clone().subtract(1, "day").format("YYYY-MM-DD");
 
+    // M-13: When an adminId is supplied (e.g. an opportunistic check triggered
+    // from an admin's dashboard), only process that admin's offices. The cron
+    // job passes no adminId and continues to process every office system-wide.
     const offices = await db.office.findMany({
+      where: adminId ? { adminId: Number(adminId) } : undefined,
       orderBy: { id: "asc" },
     });
 

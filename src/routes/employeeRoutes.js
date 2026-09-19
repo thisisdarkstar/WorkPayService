@@ -30,7 +30,7 @@ router.post("/admin-reset-password/:id", adminAuth, adminResetEmployeePassword);
 router.post("/login", loginEmployee);
 router.post("/reset-password",resetPasswordWithPhone);
 router.post("/update-password",employeeAuth,resetPasswordWithJWT);
-router.get("/phone/:phone", getEmployeeByPhone); // Get employee by phone (to check if exists)
+router.get("/phone/:phone", adminAuth, getEmployeeByPhone); // Get employee by phone (protected; prevents anonymous enumeration - H-01)
 
 
 

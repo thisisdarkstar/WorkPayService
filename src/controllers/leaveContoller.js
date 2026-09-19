@@ -10,6 +10,103 @@ const toUTC = (datetime) => {
 const formatDateIST = (datetime) =>
   moment.utc(datetime).tz("Asia/Kolkata").format("YYYY-MM-DD");
 
+// ---------------- Preview Leave (M-10) ----------------
+// Returns the authoritative server-side calculation of working days, holiday
+// exclusions, and paid/unpaid split for a proposed leave range WITHOUT creating
+// any records. The client uses this instead of re-implementing the same rules,
+// eliminating the risk of the preview diverging from what applyLeave does.
+export const previewLeave = async (req, res) => {
+  try {
+    const empId = req.employee.id;
+    const { startDate, endDate } = req.body;
+
+    if (!startDate) {
+      return res.status(400).json({ error: "startDate is required" });
+    }
+
+    const fromDateUTC = toUTC(startDate);
+    const toDateUTC = toUTC(endDate || startDate);
+
+    if (fromDateUTC > toDateUTC) {
+      return res.status(400).json({ error: "Start date cannot be after end date" });
+    }
+
+    // Holidays in range for this employee's admin
+    const holidays = await req.db.holiday.findMany({
+      where: {
+        date: { gte: fromDateUTC, lte: toDateUTC },
+        adminId: Number(req.employee.adminId),
+      },
+      select: { date: true, description: true },
+    });
+    const holidayDateSet = new Set(holidays.map((h) => formatDateIST(h.date)));
+
+    const startStr = formatDateIST(fromDateUTC);
+    const endStr = formatDateIST(toDateUTC);
+
+    // Reject if start or end is a holiday (mirrors applyLeave)
+    if (holidayDateSet.has(startStr) || holidayDateSet.has(endStr)) {
+      return res.json({
+        valid: false,
+        reason: holidayDateSet.has(startStr)
+          ? "Start date is a holiday. Please select a different date."
+          : "End date is a holiday. Please select a different date.",
+      });
+    }
+
+    // Build working days (exclude in-between holidays)
+    const holidaysExcluded = [];
+    let workingDays = 0;
+    const cursor = moment.utc(fromDateUTC);
+    const endCursor = moment.utc(toDateUTC);
+    while (cursor <= endCursor) {
+      const dateStr = cursor.format("YYYY-MM-DD");
+      if (holidayDateSet.has(dateStr)) {
+        const h = holidays.find((x) => formatDateIST(x.date) === dateStr);
+        holidaysExcluded.push({ date: dateStr, name: h?.description || "Holiday" });
+      } else {
+        workingDays++;
+      }
+      cursor.add(1, "day");
+    }
+
+    if (workingDays <= 0) {
+      return res.json({
+        valid: false,
+        reason: "Selected period contains only holidays. No leave application needed.",
+        holidaysExcluded,
+      });
+    }
+
+    const employee = await req.db.employee.findUnique({
+      where: { id: Number(empId) },
+      select: { leaveBalance: true },
+    });
+    const leaveBalance = employee?.leaveBalance ?? 0;
+
+    const paidDays = Math.max(0, Math.min(workingDays, leaveBalance));
+    const unpaidDays = workingDays - paidDays;
+
+    const totalCalendarDays =
+      Math.round((toDateUTC - fromDateUTC) / (1000 * 60 * 60 * 24)) + 1;
+
+    return res.json({
+      valid: true,
+      startDate: startStr,
+      endDate: endStr,
+      totalCalendarDays,
+      totalWorkingDays: workingDays,
+      holidaysExcluded,
+      leaveBalance,
+      paidDays,
+      unpaidDays,
+      isSingleDay: startStr === endStr,
+    });
+  } catch (error) {
+    return sendApiError(res, error, 500, "Failed to preview leave");
+  }
+};
+
 // ---------------- Apply Leave ----------------
 export const applyLeave = async (req, res) => {
   try {
@@ -31,11 +128,15 @@ export const applyLeave = async (req, res) => {
         .json({ error: "Start date cannot be after end date" });
     }
 
-    // 1️⃣ Overlapping leave check (only conflict with APPROVED leaves)
+    // 1️⃣ Overlapping leave check.
+    // M-03: Conflict with both APPROVED and PENDING leaves. Previously only
+    // APPROVED leaves were checked, so an employee could stack multiple
+    // overlapping applications for the same dates; approving them in sequence
+    // would double-decrement the leave balance for the same days.
     const existingLeaves = await req.db.leave.findMany({
       where: {
         empId: Number(empId),
-        status: "APPROVED",
+        status: { in: ["APPROVED", "PENDING"] },
         OR: [
           {
             AND: [
@@ -67,7 +168,7 @@ export const applyLeave = async (req, res) => {
 
     if (existingLeaves.length > 0) {
       return res.status(400).json({
-        error: "Leave dates conflict with existing approved leave applications",
+        error: "Leave dates conflict with an existing pending or approved leave application",
         conflictingLeaves: existingLeaves.map((l) => ({
           id: l.id,
           fromDate: formatDateIST(l.fromDate),
@@ -213,8 +314,6 @@ export const getLeaveSummary = async (req, res) => {
     const { officeId } = req.params;
     const adminId = Number(req.admin.id);
     
-    console.log("DEBUG - Getting leave summary for officeId:", officeId);
-    
     if (officeId === "all" || officeId === undefined) {
       isAllOffices = true;
       const allEmployees = await req.db.employee.findMany({
@@ -250,8 +349,6 @@ export const getLeaveSummary = async (req, res) => {
       employeeIds = officeEmployees.map(emp => emp.id);
     }
     
-    console.log("DEBUG - Total active employees in leave summary scope:", employeeIds.length);
-
     if (employeeIds.length === 0) {
       return res.json({
         office: officeDetails,
@@ -287,12 +384,6 @@ export const getLeaveSummary = async (req, res) => {
         fromDate: formatDateIST(l.fromDate),
         toDate: formatDateIST(l.toDate),
       }));
-
-    console.log("DEBUG - Leave summary counts:", {
-      approved: approved.length,
-      rejected: rejected.length,
-      pending: pending.length
-    });
 
     res.json({
       office: officeDetails,
@@ -361,13 +452,29 @@ export const updateLeaveStatus = async (req, res) => {
       const end = new Date(leave.toDate);
       const employeeSalary = leave.employee.baseSalary;
 
+      // H-04: Skip any holidays that fall within the leave range. Holidays may
+      // have been added AFTER the leave was applied, so we cannot rely solely on
+      // the stored fromDate/toDate range being holiday-free. Deducting salary for
+      // a company holiday would overcharge the employee.
+      const rangeHolidays = await req.db.holiday.findMany({
+        where: {
+          adminId: leave.employee.adminId,
+          date: { gte: start, lte: end },
+        },
+        select: { date: true },
+      });
+      const holidaySet = new Set(rangeHolidays.map((h) => formatDateIST(h.date)));
+
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const leaveDateIST = formatDateIST(d);
+
+        // Do not deduct for holidays within the leave period.
+        if (holidaySet.has(leaveDateIST)) continue;
+
         const leaveDay = moment.utc(d).tz("Asia/Kolkata");
         const totalDaysInMonth = leaveDay.daysInMonth();
         const perDayAmount = Math.round(employeeSalary / totalDaysInMonth);
         totalDeductionAmount += perDayAmount;
-
-        const leaveDateIST = formatDateIST(d);
 
         transactions.push({
           empId: leave.empId,
@@ -471,9 +578,17 @@ export const getLeavesByYear = async (req, res) => {
       orderBy: { fromDate: "desc" },
     });
 
+    // Include the current leave balance so the client shows an accurate
+    // paid/unpaid preview without depending on separately-fetched state.
+    const employee = await req.db.employee.findUnique({
+      where: { id: Number(empId) },
+      select: { leaveBalance: true },
+    });
+
     res.json({
       empId: Number(empId),
       year: Number(year),
+      leaveBalance: employee?.leaveBalance ?? 0,
       leaves: leaves.map((l) => ({
         ...l,
         fromDate: formatDateIST(l.fromDate),

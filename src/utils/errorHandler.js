@@ -37,8 +37,16 @@ export const sendApiError = (res, err, statusCode = 500, fallbackMessage = "Inte
   });
 
   // 3. Return JSON to client with txnId for support/debugging reference
+  // H-05: For server-side (5xx) errors in production, return the generic
+  // fallback message instead of the raw exception text, which can leak Prisma /
+  // database schema details. Intentional 4xx messages (validation, auth, etc.)
+  // are safe to return as-is. Full detail is always preserved in the logs above.
+  const isProduction = process.env.NODE_ENV === "production";
+  const clientMessage =
+    isProduction && statusCode >= 500 ? fallbackMessage : errorMessage;
+
   return res.status(statusCode).json({
-    error: errorMessage,
+    error: clientMessage,
     txnId,
   });
 };

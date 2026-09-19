@@ -9,6 +9,9 @@ export const createOffice = async (req, res) => {
     const {name, latitude, longitude, checkin, checkout, breakTime, range, autoFinalizeTime} = req.body;
 
     // Validate required fields
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: "Office name is required" });
+    }
     if (!latitude || !longitude || !checkin || !checkout) {
       return res.status(400).json({ 
         error: "Missing required fields: latitude, longitude, checkin, checkout" 
@@ -17,7 +20,7 @@ export const createOffice = async (req, res) => {
 
     const office = await req.db.office.create({
       data: {
-        name,
+        name: String(name).trim(),
         latitude,
         longitude,
         checkin,
