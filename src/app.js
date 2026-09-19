@@ -64,7 +64,11 @@ app.use(
       // send no Origin header.
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error("Not allowed by CORS"));
+      // F-01: Do NOT throw for a disallowed origin — throwing propagates to the
+      // global 500 handler and logs a false server error. Returning `false`
+      // simply omits the CORS headers, so the browser blocks the cross-origin
+      // response on its side. The request is still effectively denied.
+      return callback(null, false);
     },
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization", "x-super-admin-key", "x-cron-secret", "x-transaction-id"],
