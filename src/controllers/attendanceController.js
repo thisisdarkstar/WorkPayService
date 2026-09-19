@@ -157,16 +157,28 @@ export const handleAttendance = async (req, res) => {
       const lateThresholdUTC = new Date(officeCheckinUTC.getTime() + 30 * 60 * 1000);
       const status = nowUTC <= lateThresholdUTC ? "PRESENT" : "LATE";
 
-      attendance = await req.db.attendance.create({
-        data: {
-          date: todayStartUTC,
-          checkInTime: nowUTC,
-          checkOutTime: null,
-          overTime: 0,
-          status,
-          employee: { connect: { id: Number(employeeId) } },
-        },
-      });
+      // CF-03 (Step 1): The findFirst above is a check-then-act that can race
+      // under concurrent double check-ins. Once a unique (empId, date) DB
+      // constraint is added, a racing second insert throws P2002; we translate
+      // that into the same friendly "already checked in" response instead of a
+      // 500. This catch is harmless before the constraint exists (never fires).
+      try {
+        attendance = await req.db.attendance.create({
+          data: {
+            date: todayStartUTC,
+            checkInTime: nowUTC,
+            checkOutTime: null,
+            overTime: 0,
+            status,
+            employee: { connect: { id: Number(employeeId) } },
+          },
+        });
+      } catch (err) {
+        if (err?.code === "P2002") {
+          return res.status(400).json({ message: "Employee already checked in today" });
+        }
+        throw err;
+      }
 
       return res.status(200).json({
         message: `Check-in ${status} at ${toISTString(nowUTC)}`,

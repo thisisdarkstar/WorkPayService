@@ -162,7 +162,10 @@ export const addHoliday = async (req, res) => {
             checkOutTime: null, // No check-out for holidays
             overTime: 0, // No overtime for holidays
             status: "HOLIDAY" // Status as HOLIDAY
-          }))
+          })),
+          // CF-03 (Step 1): tolerate a pre-existing (empId, date) row once the
+          // unique constraint is added, instead of throwing on a rare overlap.
+          skipDuplicates: true
         });
         attendanceCount = attendanceRecords.count;
       }

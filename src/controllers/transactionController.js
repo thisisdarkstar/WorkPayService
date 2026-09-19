@@ -11,8 +11,25 @@ export const addTransaction = async (req, res) => {
   try {
     const { empId, amount, description, type, month, year, date } = req.body;
 
-    if (!empId || !amount || !type) {
-      return res.status(400).json({ error: "empId, amount and type are required" });
+    if (!empId || !type) {
+      return res.status(400).json({ error: "empId and type are required" });
+    }
+
+    // CF-02: validate the transaction type against the PayType enum.
+    const VALID_TYPES = ["ADVANCE", "SALARY", "OVERTIME", "DEDUCTION", "BONUS"];
+    if (!VALID_TYPES.includes(type)) {
+      return res.status(400).json({ error: "Invalid transaction type" });
+    }
+
+    // CF-02: for every type EXCEPT SALARY (whose amount is computed server-side
+    // below), the client-supplied amount must be a positive, finite number.
+    // This blocks negative amounts (e.g. a negative DEDUCTION acting as a credit)
+    // and non-numeric input.
+    const parsedAmount = Number(amount);
+    if (type !== "SALARY") {
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        return res.status(400).json({ error: "Amount must be a positive number" });
+      }
     }
 
     const employee = await req.db.employee.findFirst({
@@ -50,6 +67,33 @@ export const addTransaction = async (req, res) => {
     const monthEndUTC = moment.tz([targetYear, targetMonth - 1, 1], "Asia/Kolkata").endOf("month").utc().toDate();
     const monthName = moment.tz([targetYear, targetMonth - 1, 1], "Asia/Kolkata").format("MMMM");
 
+    // Fetch this month's existing transactions for the employee. Used to
+    // recompute SALARY (CF-01) and to enforce the advance cap (CF-04).
+    const monthTransactions = await req.db.transaction.findMany({
+      where: {
+        empId: Number(empId),
+        date: { gte: monthStartUTC, lte: monthEndUTC },
+      },
+      select: { amount: true, payType: true },
+    });
+
+    const sumByType = (t) =>
+      monthTransactions
+        .filter((x) => x.payType === t)
+        .reduce((acc, x) => acc + (Number(x.amount) || 0), 0);
+
+    const totalOvertime = sumByType("OVERTIME");
+    const totalBonus = sumByType("BONUS");
+    const totalDeduction = sumByType("DEDUCTION");
+    const totalAdvance = sumByType("ADVANCE");
+
+    // Net payable for the month = base + overtime + bonus - deduction - advance.
+    const netPayable = employee.baseSalary + totalOvertime + totalBonus - totalDeduction - totalAdvance;
+
+    // The amount that will actually be stored. For SALARY it is recomputed on
+    // the server (CF-01) so a tampered client cannot dictate the payout.
+    let finalAmount = parsedAmount;
+
     // If SALARY, check if already settled for target month
     if (type === "SALARY") {
       const existingSalary = await req.db.transaction.findFirst({
@@ -65,13 +109,32 @@ export const addTransaction = async (req, res) => {
           error: `Salary transaction has already been settled for this employee in ${monthName} ${targetYear}`
         });
       }
+
+      // CF-01: authoritative server-side salary amount. The client-supplied
+      // amount is ignored entirely.
+      finalAmount = netPayable;
+
+      if (!Number.isFinite(finalAmount)) {
+        return res.status(400).json({ error: "Unable to compute salary amount" });
+      }
+    }
+
+    // CF-04: enforce the advance cap on the server. An advance cannot exceed the
+    // remaining net payable for the month (base + overtime + bonus - deductions
+    // - advances already taken). Previously this was only checked on the client.
+    if (type === "ADVANCE") {
+      if (parsedAmount > netPayable) {
+        return res.status(400).json({
+          error: `Advance cannot exceed the available balance of ₹${Math.max(0, netPayable).toLocaleString("en-IN")} for ${monthName} ${targetYear}`,
+        });
+      }
     }
 
     // Create transaction record (store UTC)
     const transaction = await req.db.transaction.create({
       data: {
         empId: Number(empId),
-        amount: Number(amount),
+        amount: Math.round(finalAmount),
         payType: type,
         description: description || null,
         date: txDateUTC

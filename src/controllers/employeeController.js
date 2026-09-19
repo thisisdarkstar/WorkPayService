@@ -400,6 +400,23 @@ export const deleteEmployee = async (req, res) => {
       return res.status(404).json({ error: "Employee not found in your organization" });
     }
 
+    // CF-08: A hard delete would fail (FK constraint) or orphan payroll history
+    // if the employee has any records. Block it and steer the admin to
+    // deactivation, which preserves attendance/leave/transaction history.
+    const [txnCount, attCount, leaveCount] = await Promise.all([
+      req.db.transaction.count({ where: { empId: existingEmployee.id } }),
+      req.db.attendance.count({ where: { empId: existingEmployee.id } }),
+      req.db.leave.count({ where: { empId: existingEmployee.id } }),
+    ]);
+
+    if (txnCount > 0 || attCount > 0 || leaveCount > 0) {
+      return res.status(400).json({
+        error:
+          "Cannot delete an employee who has attendance, leave, or transaction history. " +
+          "Please deactivate the employee instead (this preserves their records).",
+      });
+    }
+
     await req.db.employee.delete({
       where: { id: existingEmployee.id },
     });
