@@ -138,7 +138,10 @@ model Attendance {
   status       attendanceStatus
   employee     Employee         @relation(fields: [empId], references: [id])
 
-  @@index([empId, date])
+  // CF-03: one attendance row per employee per day. Prevents duplicate rows from
+  // concurrent check-ins. A @@unique also provides the (empId, date) index, so
+  // the previous @@index([empId, date]) is no longer needed.
+  @@unique([empId, date])
   @@index([date, status])
   @@index([empId])
 }
