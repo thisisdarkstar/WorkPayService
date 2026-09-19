@@ -495,10 +495,61 @@ export const updateLeaveStatus = async (req, res) => {
     // Execute updates atomically inside a transaction
     const updatedLeave = await req.db.$transaction(async (tx) => {
       if (status === "APPROVED" && leave.type === "PAID") {
-        await tx.employee.update({
+        // CF-05: The paid/unpaid split was decided at APPLY time using the
+        // balance then. By approval time the balance may have dropped (e.g.
+        // another leave was approved first). Re-read the CURRENT balance inside
+        // the transaction and never let it go negative. If the employee no
+        // longer has enough paid days, convert the uncovered days to unpaid
+        // deductions instead of silently over-crediting / going negative.
+        const current = await tx.employee.findUnique({
           where: { id: leave.empId },
-          data: { leaveBalance: { decrement: leave.totalDays } },
+          select: { leaveBalance: true, baseSalary: true },
         });
+        const availablePaid = Math.max(0, Math.min(current?.leaveBalance ?? 0, leave.totalDays));
+        const shortfallDays = leave.totalDays - availablePaid;
+
+        if (availablePaid > 0) {
+          await tx.employee.update({
+            where: { id: leave.empId },
+            data: { leaveBalance: { decrement: availablePaid } },
+          });
+        }
+
+        // Any days not covered by remaining balance become unpaid deductions,
+        // applied per working day (skipping holidays), matching the UNPAID path.
+        if (shortfallDays > 0) {
+          const start = new Date(leave.fromDate);
+          const end = new Date(leave.toDate);
+          const rangeHolidays = await tx.holiday.findMany({
+            where: { adminId: leave.employee.adminId, date: { gte: start, lte: end } },
+            select: { date: true },
+          });
+          const holidaySet = new Set(rangeHolidays.map((h) => formatDateIST(h.date)));
+
+          const salary = current?.baseSalary ?? leave.employee.baseSalary;
+          const shortfallTxns = [];
+          const remaining = shortfallDays;
+          // Deduct for the LAST `shortfallDays` working days of the leave.
+          const workingDays = [];
+          for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+            if (!holidaySet.has(formatDateIST(d))) workingDays.push(new Date(d));
+          }
+          const toDeduct = workingDays.slice(Math.max(0, workingDays.length - remaining));
+          for (const d of toDeduct) {
+            const daysInMonth = moment.utc(d).tz("Asia/Kolkata").daysInMonth();
+            const perDay = Math.round(salary / daysInMonth);
+            shortfallTxns.push({
+              empId: leave.empId,
+              amount: perDay,
+              payType: "DEDUCTION",
+              description: `Unpaid leave deduction (insufficient balance) for ${formatDateIST(d)} - Leave ID: ${leave.id}`,
+              date: new Date(d),
+            });
+          }
+          if (shortfallTxns.length > 0) {
+            await tx.transaction.createMany({ data: shortfallTxns });
+          }
+        }
       }
 
       if (status === "APPROVED" && leave.type === "UNPAID" && transactions.length > 0) {
