@@ -265,26 +265,34 @@ export const applyLeave = async (req, res) => {
       const paidDays = employee.leaveBalance;
       const unpaidDays = totalWorkingDays - paidDays;
 
-      const paidLeave = await req.db.leave.create({
-        data: {
-          empId: Number(empId),
-          reason,
-          fromDate: workingDates[0],
-          toDate: workingDates[paidDays - 1],
-          totalDays: paidDays,
-          type: "PAID",
-        },
-      });
+      // F-4: Persist both halves atomically. Previously these were two separate
+      // create() calls, so a failure on the second one left the employee with
+      // only the paid portion — silently losing the unpaid tail of their leave
+      // range even though the success toast implied the whole leave was saved.
+      const [paidLeave, unpaidLeave] = await req.db.$transaction(async (tx) => {
+        const paid = await tx.leave.create({
+          data: {
+            empId: Number(empId),
+            reason,
+            fromDate: workingDates[0],
+            toDate: workingDates[paidDays - 1],
+            totalDays: paidDays,
+            type: "PAID",
+          },
+        });
 
-      const unpaidLeave = await req.db.leave.create({
-        data: {
-          empId: Number(empId),
-          reason,
-          fromDate: workingDates[paidDays],
-          toDate: workingDates[workingDates.length - 1],
-          totalDays: unpaidDays,
-          type: "UNPAID",
-        },
+        const unpaid = await tx.leave.create({
+          data: {
+            empId: Number(empId),
+            reason,
+            fromDate: workingDates[paidDays],
+            toDate: workingDates[workingDates.length - 1],
+            totalDays: unpaidDays,
+            type: "UNPAID",
+          },
+        });
+
+        return [paid, unpaid];
       });
 
       leaveApplications.push(paidLeave, unpaidLeave);
@@ -554,6 +562,78 @@ export const updateLeaveStatus = async (req, res) => {
 
       if (status === "APPROVED" && leave.type === "UNPAID" && transactions.length > 0) {
         await tx.transaction.createMany({ data: transactions });
+      }
+
+      // F-3: Retroactive reconciliation. If the leave range covers dates
+      // that are already past (or today) the finalize service may have
+      // marked those days ABSENT and created per-day salary DEDUCTION
+      // transactions. Without this pass, an APPROVED leave silently
+      // double-charges the employee (existing absence deduction + new unpaid
+      // deduction) or consumes their leave balance for a day that still
+      // shows as ABSENT in their attendance history. We only run this for
+      // APPROVED (never for REJECTED, which naturally leaves the ABSENT
+      // record intact).
+      if (status === "APPROVED") {
+        const cleanupStart = new Date(leave.fromDate);
+        const cleanupEnd = new Date(leave.toDate);
+        const rangeHolidaysForCleanup = await tx.holiday.findMany({
+          where: {
+            adminId: leave.employee.adminId,
+            date: { gte: cleanupStart, lte: cleanupEnd },
+          },
+          select: { date: true },
+        });
+        const cleanupHolidaySet = new Set(
+          rangeHolidaysForCleanup.map((h) => formatDateIST(h.date))
+        );
+
+        for (
+          let d = new Date(cleanupStart);
+          d <= cleanupEnd;
+          d.setDate(d.getDate() + 1)
+        ) {
+          const dateISTStr = formatDateIST(d);
+          if (cleanupHolidaySet.has(dateISTStr)) continue;
+
+          const dayStartUTC = moment
+            .tz(dateISTStr, "Asia/Kolkata")
+            .startOf("day")
+            .utc()
+            .toDate();
+          const dayEndUTC = moment
+            .tz(dateISTStr, "Asia/Kolkata")
+            .endOf("day")
+            .utc()
+            .toDate();
+
+          // 1) Convert any ABSENT row for that day to LEAVE. Rows that show
+          //    PRESENT/LATE (employee actually worked) or HOLIDAY are left
+          //    untouched — we don't want to overwrite worked days.
+          await tx.attendance.updateMany({
+            where: {
+              empId: leave.empId,
+              status: "ABSENT",
+              date: { gte: dayStartUTC, lte: dayEndUTC },
+            },
+            data: { status: "LEAVE" },
+          });
+
+          // 2) Remove the paired per-day absence DEDUCTION transaction.
+          //    Matched by the exact description prefix that finalize
+          //    writes, so we don't accidentally delete unrelated
+          //    deductions (bonuses/advances/etc. have different payType,
+          //    unpaid-leave deductions have a different description).
+          await tx.transaction.deleteMany({
+            where: {
+              empId: leave.empId,
+              payType: "DEDUCTION",
+              date: { gte: dayStartUTC, lte: dayEndUTC },
+              description: {
+                contains: `Salary deduction for absence on ${dateISTStr}`,
+              },
+            },
+          });
+        }
       }
 
       return tx.leave.update({

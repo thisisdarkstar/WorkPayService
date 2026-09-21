@@ -124,25 +124,69 @@ export const addHoliday = async (req, res) => {
       select: { id: true }
     });
 
-    // Check if any attendance records already exist for this date among THIS admin's employees
-    const employeeIds = employees.map(e => e.id);
-    const existingAttendance = employeeIds.length > 0 ? await req.db.attendance.findMany({
-      where: {
-        date: holidayDateUTC,
-        empId: { in: employeeIds }
-      }
-    }) : [];
-
-    if (existingAttendance.length > 0) {
-      return res.status(400).json({ 
-        error: "Attendance records already exist for this date",
-        existingCount: existingAttendance.length
-      });
-    }
+    // F-8: Instead of hard-refusing when any attendance already exists for
+    // this date, reconcile inside a single transaction. A same-day / late
+    // holiday declaration is a real workflow (govt-announced holidays,
+    // regional festivals) and admins had no path to declare one once even a
+    // single employee had checked in. We now:
+    //   1) Convert existing PRESENT/LATE/ABSENT/LEAVE rows for that date to
+    //      HOLIDAY (keeping checkin/checkout timestamps so the worked-hours
+    //      history is preserved).
+    //   2) Refund the paired per-day absence DEDUCTION transactions that
+    //      finalize may have created for that date. Matched by description
+    //      prefix so we don't touch unrelated deductions.
+    //   3) Create the holiday row.
+    //   4) Backfill HOLIDAY attendance rows for any employees who had NO
+    //      record for that date.
 
     // Use transaction to ensure both holiday and attendance records are created atomically
     const result = await req.db.$transaction(async (tx) => {
-      // Create the holiday
+      const holidayISTDate = toISTDateString(holidayDateUTC);
+      const employeeIds = employees.map((e) => e.id);
+
+      // 1. Overwrite pre-existing non-HOLIDAY attendance rows for this date.
+      let overwrittenCount = 0;
+      if (employeeIds.length > 0) {
+        const overwritten = await tx.attendance.updateMany({
+          where: {
+            date: holidayDateUTC,
+            empId: { in: employeeIds },
+            status: { in: ["PRESENT", "LATE", "ABSENT", "LEAVE"] },
+          },
+          data: { status: "HOLIDAY" },
+        });
+        overwrittenCount = overwritten.count;
+      }
+
+      // 2. Refund per-day absence DEDUCTION transactions for this date.
+      //    Matches the exact prefix that autoFinalizeService writes so we
+      //    don't accidentally erase bonuses/advances/etc.
+      let refundedDeductions = 0;
+      if (employeeIds.length > 0) {
+        const monthStart = moment
+          .tz(holidayISTDate, "Asia/Kolkata")
+          .startOf("day")
+          .utc()
+          .toDate();
+        const monthEnd = moment
+          .tz(holidayISTDate, "Asia/Kolkata")
+          .endOf("day")
+          .utc()
+          .toDate();
+        const refunded = await tx.transaction.deleteMany({
+          where: {
+            empId: { in: employeeIds },
+            payType: "DEDUCTION",
+            date: { gte: monthStart, lte: monthEnd },
+            description: {
+              contains: `Salary deduction for absence on ${holidayISTDate}`,
+            },
+          },
+        });
+        refundedDeductions = refunded.count;
+      }
+
+      // 3. Create the holiday row.
       const holiday = await tx.holiday.create({
         data: {
           description,
@@ -151,28 +195,31 @@ export const addHoliday = async (req, res) => {
         },
       });
 
+      // 4. Backfill HOLIDAY attendance rows for employees who had NO record.
       let attendanceCount = 0;
       if (employees.length > 0) {
-        // Create attendance records for all employees with status "HOLIDAY"
         const attendanceRecords = await tx.attendance.createMany({
-          data: employees.map(employee => ({
+          data: employees.map((employee) => ({
             empId: employee.id,
             date: holidayDateUTC, // Same UTC date as holiday
-            checkInTime: null, // No check-in for holidays
-            checkOutTime: null, // No check-out for holidays
-            overTime: 0, // No overtime for holidays
-            status: "HOLIDAY" // Status as HOLIDAY
+            checkInTime: null,
+            checkOutTime: null,
+            overTime: 0,
+            status: "HOLIDAY",
           })),
-          // CF-03 (Step 1): tolerate a pre-existing (empId, date) row once the
-          // unique constraint is added, instead of throwing on a rare overlap.
-          skipDuplicates: true
+          // The @@unique([empId, date]) constraint means already-existing
+          // rows (including the ones we just overwrote to HOLIDAY) are
+          // skipped instead of causing a P2002.
+          skipDuplicates: true,
         });
         attendanceCount = attendanceRecords.count;
       }
 
-      return { 
-        holiday, 
-        attendanceCount 
+      return {
+        holiday,
+        attendanceCount,
+        overwrittenCount,
+        refundedDeductions,
       };
     });
 
@@ -183,7 +230,11 @@ export const addHoliday = async (req, res) => {
         ...result.holiday,
         date: toISTDateString(result.holiday.date), // Convert back to IST for response
       },
-      attendanceCreated: result.attendanceCount
+      attendanceCreated: result.attendanceCount,
+      // F-8: expose the reconciliation counts so the admin knows how many
+      // pre-existing rows and absence-deductions were adjusted.
+      attendanceOverwritten: result.overwrittenCount,
+      absenceDeductionsRefunded: result.refundedDeductions,
     });
   } catch (error) {
     return sendApiError(res, error, 500, "Failed to add holiday");

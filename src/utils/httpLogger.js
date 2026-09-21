@@ -6,6 +6,12 @@ const SENSITIVE_KEYS = new Set([
   "newpassword",
   "currentpassword",
   "confirmpassword",
+  // F-1: server-generated temp passwords (returned once from admin-create /
+  // admin-reset flows) must never end up in log storage. Add defensive
+  // aliases too so future callers with slightly different naming stay safe.
+  "temporarypassword",
+  "temp_password",
+  "generatedpassword",
   "authorization",
   "token",
   "refreshtoken",

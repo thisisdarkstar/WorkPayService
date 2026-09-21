@@ -219,6 +219,19 @@ export const createEmployee = async (req, res) => {
       }
     });
   } catch (error) {
+    // F-9: Turn Prisma's raw P2002 (unique-constraint violation) into a
+    // friendly 400. The pre-checks above cover the common case, but a
+    // concurrent create with the same phone/email would still race past
+    // them. Without this handler that race surfaces as a 500 "Internal
+    // Server Error" with no clue what to change.
+    if (error?.code === "P2002") {
+      const field = Array.isArray(error?.meta?.target)
+        ? error.meta.target.join(", ")
+        : (error?.meta?.target || "field");
+      return res.status(400).json({
+        error: `An employee with this ${field} already exists.`,
+      });
+    }
     return sendApiError(res, error, 500, "Failed to create employee");
   }
 };
@@ -287,7 +300,12 @@ export const updateEmployee = async (req, res) => {
   try {
     const { id } = req.params;
     const adminId = Number(req.admin.id); // from adminAuth middleware
-    const { name, phone, email, password, baseSalary, overtimeRate, officeId,accountNumber,ifscCode } = req.body;
+    // F-2: `password` is intentionally NOT destructured here. Password changes
+    // must go through `adminResetEmployeePassword` (POST /admin-reset-password/:id)
+    // which also updates `passwordChangedAt` to invalidate any live JWTs.
+    // Accepting `password` on the general update path skipped that step,
+    // leaving stolen tokens valid until natural expiry.
+    const { name, phone, email, baseSalary, overtimeRate, officeId, accountNumber, ifscCode } = req.body;
 
     const existingEmployee = await req.db.employee.findFirst({
       where: { id: Number(id), adminId }
@@ -337,10 +355,10 @@ export const updateEmployee = async (req, res) => {
       updateData.officeId = Number(officeId);
     }
 
-    // If password provided, hash it
-    if (password) {
-      updateData.password = await bcrypt.hash(password, 10);
-    }
+    // F-2: Password changes are handled exclusively by
+    // `adminResetEmployeePassword` (which also bumps `passwordChangedAt` to
+    // invalidate existing sessions). We deliberately do NOT accept a
+    // `password` field here.
 
     const updatedEmployee = await req.db.employee.update({
       where: { id: existingEmployee.id },
@@ -358,6 +376,16 @@ export const updateEmployee = async (req, res) => {
       ifscCode:updatedEmployee.ifscCode
     } });
   } catch (error) {
+    // F-9: Friendly message when the admin edits an employee's phone or
+    // email to a value that already belongs to another employee.
+    if (error?.code === "P2002") {
+      const field = Array.isArray(error?.meta?.target)
+        ? error.meta.target.join(", ")
+        : (error?.meta?.target || "field");
+      return res.status(400).json({
+        error: `Another employee already uses this ${field}.`,
+      });
+    }
     return sendApiError(res, error, 500, "Failed to update employee");
   }
 };

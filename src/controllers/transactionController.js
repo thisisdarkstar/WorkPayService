@@ -1,5 +1,6 @@
 import moment from "moment-timezone";
 import { sendApiError } from "../utils/errorHandler.js";
+import logger from "../utils/logger.js";
 
 // Helper: convert UTC date to IST string
 const toISTString = (utcDate) => {
@@ -93,6 +94,7 @@ export const addTransaction = async (req, res) => {
     // The amount that will actually be stored. For SALARY it is recomputed on
     // the server (CF-01) so a tampered client cannot dictate the payout.
     let finalAmount = parsedAmount;
+    let salaryClampWarning = null;
 
     // If SALARY, check if already settled for target month
     if (type === "SALARY") {
@@ -116,6 +118,20 @@ export const addTransaction = async (req, res) => {
 
       if (!Number.isFinite(finalAmount)) {
         return res.status(400).json({ error: "Unable to compute salary amount" });
+      }
+
+      // F-5: Clamp negative payouts to 0. When cumulative deductions +
+      // advances exceed base + overtime + bonus, netPayable becomes
+      // negative — persisting a negative SALARY row would look like the
+      // employee owes the company. Store 0 for the settlement and surface
+      // a warning so the admin knows the payslip was capped.
+      if (finalAmount < 0) {
+        salaryClampWarning = {
+          computedNetPayable: Math.round(netPayable),
+          storedAmount: 0,
+          message: `Deductions and advances exceed gross pay for ${monthName} ${targetYear}. Salary has been settled at ₹0 instead of ₹${Math.round(netPayable).toLocaleString("en-IN")}. Consider recording the shortfall (₹${Math.abs(Math.round(netPayable)).toLocaleString("en-IN")}) separately if it needs to be carried over.`,
+        };
+        finalAmount = 0;
       }
     }
 
@@ -147,7 +163,10 @@ export const addTransaction = async (req, res) => {
       transaction: {
         ...transaction,
         date: toISTString(transaction.date) // Response in IST
-      }
+      },
+      // F-5: When SALARY was clamped from a negative net-payable to 0, tell
+      // the admin so they don't think a zero-rupee payslip is a bug.
+      ...(salaryClampWarning ? { warning: salaryClampWarning } : {}),
     });
   } catch (error) {
     return sendApiError(res, error, 500, "Failed to settle transaction");
@@ -196,11 +215,34 @@ export const revertSalary = async (req, res) => {
       });
     }
 
+    // F-6: Emit a structured audit log BEFORE deleting so we retain a
+    // permanent trail of who reverted a settled salary, what the settled
+    // amount was, and which month it applied to. Logs are captured by
+    // Winston (combined.log locally, Vercel/console in production) and
+    // survive the DB row's deletion. The response also echoes back the
+    // snapshot so the admin UI can confirm what was undone.
+    const auditSnapshot = {
+      revertedTransactionId: salaryTxn.id,
+      empId: salaryTxn.empId,
+      employeeName: employee.name,
+      amount: salaryTxn.amount,
+      month: targetMonth,
+      year: targetYear,
+      originalDate: salaryTxn.date,
+      revertedByAdminId: req.admin?.id ?? null,
+      revertedAt: new Date().toISOString(),
+    };
+    logger.info(
+      `SALARY reverted: emp=${salaryTxn.empId} (${employee.name}) amount=${salaryTxn.amount} ${monthName} ${targetYear} by admin=${req.admin?.id}`,
+      { metadata: { audit: "revert_salary", ...auditSnapshot } }
+    );
+
     await req.db.transaction.delete({ where: { id: salaryTxn.id } });
 
     res.json({
       message: `Salary settlement reverted for ${employee.name} (${monthName} ${targetYear})`,
       revertedTransactionId: salaryTxn.id,
+      revertedSnapshot: auditSnapshot,
     });
   } catch (error) {
     return sendApiError(res, error, 500, "Failed to revert salary");
