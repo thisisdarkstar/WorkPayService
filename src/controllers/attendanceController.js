@@ -596,7 +596,87 @@ export const getEmployeeAttendanceByMonthInAdmin = async (req, res) => {
   }
 };
 
+// ✅ Admin: Get attendance history across employees with rich filters (date, range, office, status, search)
+export const getAdminAttendanceHistory = async (req, res) => {
+  try {
+    const adminId = Number(req.admin.id);
+    const { startDate, endDate, date, month, year, officeId, status, search, limit, offset } = req.query;
 
+    let dateFilter = {};
+    if (date) {
+      const dayStartUTC = moment.tz(date, "Asia/Kolkata").startOf("day").utc().toDate();
+      const dayEndUTC = moment.tz(date, "Asia/Kolkata").endOf("day").utc().toDate();
+      dateFilter = { gte: dayStartUTC, lte: dayEndUTC };
+    } else if (startDate || endDate) {
+      const from = startDate ? moment.tz(startDate, "Asia/Kolkata").startOf("day").utc().toDate() : undefined;
+      const to = endDate ? moment.tz(endDate, "Asia/Kolkata").endOf("day").utc().toDate() : undefined;
+      dateFilter = {};
+      if (from) dateFilter.gte = from;
+      if (to) dateFilter.lte = to;
+    } else if (month && year) {
+      const paddedMonth = month.toString().padStart(2, "0");
+      const monthStartUTC = moment.tz(`${year}-${paddedMonth}-01`, "Asia/Kolkata").startOf("month").utc().toDate();
+      const monthEndUTC = moment.tz(`${year}-${paddedMonth}-01`, "Asia/Kolkata").endOf("month").utc().toDate();
+      dateFilter = { gte: monthStartUTC, lte: monthEndUTC };
+    }
+
+    const employeeWhere = { adminId };
+    if (officeId && officeId !== "all") {
+      employeeWhere.officeId = Number(officeId);
+    }
+    if (search && search.trim()) {
+      const q = search.trim();
+      employeeWhere.OR = [
+        { name: { contains: q, mode: "insensitive" } },
+        { phone: { contains: q } },
+      ];
+    }
+
+    const where = {
+      employee: employeeWhere,
+      ...(Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {}),
+      ...(status && status !== "ALL" ? { status } : {}),
+    };
+
+    const takeLimit = limit ? Math.min(Number(limit), 200) : 100;
+    const skipOffset = offset ? Number(offset) : 0;
+
+    const [totalCount, records] = await Promise.all([
+      req.db.attendance.count({ where }),
+      req.db.attendance.findMany({
+        where,
+        take: takeLimit,
+        skip: skipOffset,
+        orderBy: [{ date: "desc" }, { id: "desc" }],
+        include: {
+          employee: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              office: { select: { id: true, name: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const formattedRecords = records.map((record) => ({
+      ...record,
+      date: toISTString(record.date),
+      checkInTime: record.checkInTime ? toISTString(record.checkInTime) : null,
+      checkOutTime: record.checkOutTime ? toISTString(record.checkOutTime) : null,
+    }));
+
+    res.json({
+      totalCount,
+      records: formattedRecords,
+      hasMore: skipOffset + records.length < totalCount,
+    });
+  } catch (error) {
+    return sendApiError(res, error, 500, "Failed to fetch attendance history");
+  }
+};
 
 // Main controller: Mark attendance for absent employees / Finalize attendance (Office-specific)
 // - Clocks out employees who checked in but haven't clocked out yet

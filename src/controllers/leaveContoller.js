@@ -779,3 +779,88 @@ export const getEmployeeLeaveHistory = async (req, res) => {
     return sendApiError(res, error, 500, "Failed to fetch leave history");
   }
 };
+
+// ✅ Admin: Get leave history across employees with rich filters (status, type, year, month, range, office, search)
+export const getAdminLeaveHistory = async (req, res) => {
+  try {
+    const adminId = Number(req.admin.id);
+    const { status, type, year, month, startDate, endDate, officeId, search, limit, offset } = req.query;
+
+    let dateFilter = {};
+    if (startDate || endDate) {
+      const from = startDate ? moment.tz(startDate, "Asia/Kolkata").startOf("day").utc().toDate() : undefined;
+      const to = endDate ? moment.tz(endDate, "Asia/Kolkata").endOf("day").utc().toDate() : undefined;
+      if (from) dateFilter.gte = from;
+      if (to) dateFilter.lte = to;
+    } else if (year) {
+      if (month) {
+        const paddedMonth = month.toString().padStart(2, "0");
+        const monthStartUTC = moment.tz(`${year}-${paddedMonth}-01`, "Asia/Kolkata").startOf("month").utc().toDate();
+        const monthEndUTC = moment.tz(`${year}-${paddedMonth}-01`, "Asia/Kolkata").endOf("month").utc().toDate();
+        dateFilter = { gte: monthStartUTC, lte: monthEndUTC };
+      } else {
+        const yearStartUTC = moment.tz(`${year}-01-01`, "Asia/Kolkata").startOf("year").utc().toDate();
+        const yearEndUTC = moment.tz(`${year}-01-01`, "Asia/Kolkata").endOf("year").utc().toDate();
+        dateFilter = { gte: yearStartUTC, lte: yearEndUTC };
+      }
+    }
+
+    const employeeWhere = { adminId };
+    if (officeId && officeId !== "all") {
+      employeeWhere.officeId = Number(officeId);
+    }
+    if (search && search.trim()) {
+      const q = search.trim();
+      employeeWhere.OR = [
+        { name: { contains: q, mode: "insensitive" } },
+        { phone: { contains: q } },
+      ];
+    }
+
+    const where = {
+      employee: employeeWhere,
+      ...(Object.keys(dateFilter).length > 0 ? { fromDate: dateFilter } : {}),
+      ...(status && status !== "ALL" ? { status } : {}),
+      ...(type && type !== "ALL" ? { type } : {}),
+    };
+
+    const takeLimit = limit ? Math.min(Number(limit), 200) : 100;
+    const skipOffset = offset ? Number(offset) : 0;
+
+    const [totalCount, leaves] = await Promise.all([
+      req.db.leave.count({ where }),
+      req.db.leave.findMany({
+        where,
+        take: takeLimit,
+        skip: skipOffset,
+        orderBy: [{ fromDate: "desc" }, { id: "desc" }],
+        include: {
+          employee: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              office: { select: { id: true, name: true } },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const formattedLeaves = leaves.map((l) => ({
+      ...l,
+      fromDate: formatDateIST(l.fromDate),
+      toDate: formatDateIST(l.toDate),
+      applyDate: formatDateIST(l.applyDate),
+    }));
+
+    res.json({
+      totalCount,
+      leaves: formattedLeaves,
+      hasMore: skipOffset + leaves.length < totalCount,
+    });
+  } catch (error) {
+    return sendApiError(res, error, 500, "Failed to fetch leave history");
+  }
+};
+

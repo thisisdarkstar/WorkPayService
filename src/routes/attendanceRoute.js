@@ -1,7 +1,7 @@
 import express from "express";
 import { handleAttendance ,getEmployeeAttendanceByMonth,getTodayAttendanceDashboard ,getEmployeeAttendanceByMonthInAdmin,
     checkBulkAttendanceStatus,markAttendanceForAbsentEmployees,getEmployeesByAttendanceStatus,
-    cronAutoFinalize
+    cronAutoFinalize, getAdminAttendanceHistory
 } from "../controllers/attendanceController.js";
 import { employeeAuth ,adminAuth} from "../Middleware/authMiddleware.js";
 
@@ -18,6 +18,7 @@ router.get("/checkBulkAttendanceStatus/:officeId",adminAuth, checkBulkAttendance
 router.post("/finalizeAttendance",adminAuth, markAttendanceForAbsentEmployees);
 router.post("/finalizeAttendance/:officeId",adminAuth, markAttendanceForAbsentEmployees);
 router.get("/getEmployeeAttendance",adminAuth,getEmployeeAttendanceByMonthInAdmin);
+router.get("/history", adminAuth, getAdminAttendanceHistory);
 router.get("/getEmployeesByStatus/:officeId/:status",adminAuth,getEmployeesByAttendanceStatus);
 router.get("/cron-auto-finalize", cronAutoFinalize);
 router.post("/cron-auto-finalize", cronAutoFinalize);
