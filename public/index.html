@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WorkPay - Smart Workforce & Attendance Management</title>
+  <meta name="description" content="WorkPay is a modern workforce management solution providing geofenced GPS attendance, automated salary slips, leave tracking, and team analytics." />
+  <link rel="icon" type="image/png" href="/icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg-primary: #070e17;
+      --bg-secondary: #0d1826;
+      --bg-card: rgba(18, 30, 49, 0.75);
+      --accent-blue: #1678d4;
+      --accent-cyan: #00d2ff;
+      --accent-gradient: linear-gradient(135deg, #1678d4 0%, #00b4d8 100%);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --border-color: rgba(255, 255, 255, 0.08);
+      --border-hover: rgba(22, 120, 212, 0.4);
+      --glow: rgba(22, 120, 212, 0.25);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-main);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Ambient background glows */
+    .glow-orb-1 {
+      position: absolute;
+      top: -120px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 480px;
+      background: radial-gradient(circle, rgba(22, 120, 212, 0.22) 0%, rgba(7, 14, 23, 0) 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .glow-orb-2 {
+      position: absolute;
+      top: 900px;
+      right: -100px;
+      width: 500px;
+      height: 500px;
+      background: radial-gradient(circle, rgba(0, 180, 216, 0.12) 0%, rgba(7, 14, 23, 0) 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Navigation */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      background: rgba(7, 14, 23, 0.85);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .nav-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0.9rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-weight: 800;
+      font-size: 1.35rem;
+      text-decoration: none;
+      color: #fff;
+      letter-spacing: -0.5px;
+    }
+
+    .logo-img {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      box-shadow: 0 4px 14px var(--glow);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 1.75rem;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: #fff;
+    }
+
+    .nav-btn {
+      padding: 0.55rem 1.15rem;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-color);
+      color: #fff !important;
+      border-radius: 9999px;
+      font-weight: 600 !important;
+      transition: all 0.2s !important;
+    }
+
+    .nav-btn:hover {
+      background: rgba(22, 120, 212, 0.2);
+      border-color: var(--accent-blue);
+      transform: translateY(-1px);
+    }
+
+    /* Hero Section */
+    .hero {
+      position: relative;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 4.5rem 1.5rem 2.5rem;
+      text-align: center;
+      z-index: 1;
+    }
+
+    .pill-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 1rem;
+      background: rgba(22, 120, 212, 0.12);
+      border: 1px solid rgba(22, 120, 212, 0.3);
+      border-radius: 9999px;
+      color: #38bdf8;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+    }
+
+    .hero h1 {
+      font-size: clamp(2.5rem, 5vw, 4.2rem);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -1.5px;
+      margin-bottom: 1.5rem;
+    }
+
+    .gradient-text {
+      background: linear-gradient(135deg, #ffffff 30%, #38bdf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero p {
+      max-width: 680px;
+      margin: 0 auto 2.2rem;
+      color: var(--text-muted);
+      font-size: 1.15rem;
+      line-height: 1.7;
+    }
+
+    .cta-group {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 3rem;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.65rem;
+      padding: 0.9rem 1.85rem;
+      background: var(--accent-gradient);
+      color: #fff;
+      font-weight: 700;
+      font-size: 1rem;
+      text-decoration: none;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px var(--glow);
+      transition: all 0.25s ease;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 30px rgba(22, 120, 212, 0.4);
+    }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.9rem 1.6rem;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      font-weight: 600;
+      font-size: 1rem;
+      text-decoration: none;
+      border-radius: 12px;
+      transition: all 0.25s ease;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-2px);
+    }
+
+    /* Feature Graphic Banner */
+    .feature-banner-wrapper {
+      max-width: 1050px;
+      margin: 0 auto 4rem;
+      padding: 0 1.5rem;
+      position: relative;
+      z-index: 1;
+    }
+
+    .feature-banner-card {
+      border-radius: 20px;
+      overflow: hidden;
+      border: 1px solid rgba(22, 120, 212, 0.3);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), 0 0 30px rgba(22, 120, 212, 0.2);
+      background: #000;
+    }
+
+    .feature-banner-img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* Real UI Screenshot Showcase */
+    .screenshots-section {
+      max-width: 1200px;
+      margin: 4rem auto 6rem;
+      padding: 0 1.5rem;
+      position: relative;
+      z-index: 1;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 3.5rem;
+    }
+
+    .section-header h2 {
+      font-size: 2.2rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      margin-bottom: 0.75rem;
+    }
+
+    .section-header p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+    }
+
+    .screens-container {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 3rem;
+      flex-wrap: wrap;
+    }
+
+    .phone-mockup {
+      width: 310px;
+      background: #0b1522;
+      border-radius: 38px;
+      padding: 12px;
+      border: 2px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7), 0 0 35px rgba(22, 120, 212, 0.2);
+      transition: transform 0.3s ease;
+    }
+
+    .phone-mockup:hover {
+      transform: translateY(-6px);
+      border-color: rgba(22, 120, 212, 0.4);
+    }
+
+    .phone-screen {
+      border-radius: 28px;
+      overflow: hidden;
+      background: #000;
+      position: relative;
+    }
+
+    .phone-screen img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .phone-caption {
+      text-align: center;
+      padding: 1.25rem 0.5rem 0.5rem;
+    }
+
+    .phone-caption h4 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 0.35rem;
+    }
+
+    .phone-caption p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    /* Feature Grid */
+    .features-section {
+      max-width: 1200px;
+      margin: 2rem auto 5rem;
+      padding: 0 1.5rem;
+      position: relative;
+      z-index: 1;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 2rem;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+      backdrop-filter: blur(12px);
+    }
+
+    .card:hover {
+      border-color: var(--border-hover);
+      transform: translateY(-4px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .card-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: rgba(22, 120, 212, 0.15);
+      border: 1px solid rgba(22, 120, 212, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .card h3 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 0.65rem;
+      color: #fff;
+    }
+
+    .card p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    /* Verification & AdMob Banner */
+    .admob-banner {
+      max-width: 1200px;
+      margin: 0 auto 5rem;
+      padding: 0 1.5rem;
+    }
+
+    .banner-box {
+      background: linear-gradient(135deg, rgba(22, 120, 212, 0.12) 0%, rgba(13, 24, 38, 0.8) 100%);
+      border: 1px solid rgba(22, 120, 212, 0.3);
+      border-radius: 16px;
+      padding: 2rem 2.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+    }
+
+    .banner-text h3 {
+      font-size: 1.2rem;
+      margin-bottom: 0.35rem;
+    }
+
+    .banner-text p {
+      color: var(--text-muted);
+      font-size: 0.92rem;
+    }
+
+    .tag-badge {
+      display: inline-block;
+      font-family: monospace;
+      padding: 0.25rem 0.65rem;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      color: #38bdf8;
+      font-size: 0.85rem;
+    }
+
+    /* Privacy & Policy Section */
+    .policy-section {
+      max-width: 1000px;
+      margin: 0 auto 6rem;
+      padding: 3rem 2rem;
+      background: var(--bg-secondary);
+      border-radius: 20px;
+      border: 1px solid var(--border-color);
+    }
+
+    .policy-section h2 {
+      font-size: 1.85rem;
+      margin-bottom: 1.5rem;
+      color: #fff;
+    }
+
+    .policy-section h3 {
+      font-size: 1.2rem;
+      margin: 1.5rem 0 0.5rem;
+      color: #38bdf8;
+    }
+
+    .policy-section p, .policy-section li {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      line-height: 1.7;
+    }
+
+    .policy-section ul {
+      margin-left: 1.5rem;
+      margin-top: 0.5rem;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border-color);
+      padding: 3rem 1.5rem;
+      background: #04080e;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .footer-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 1.5rem;
+    }
+
+    .footer-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .footer-links a:hover {
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="glow-orb-1"></div>
+  <div class="glow-orb-2"></div>
+
+  <!-- Navigation -->
+  <nav>
+    <div class="nav-container">
+      <a href="/" class="logo">
+        <img src="/icon.png" alt="WorkPay Official Icon" class="logo-img" />
+        <span>WorkPay</span>
+      </a>
+      <div class="nav-links">
+        <a href="#screens">Screenshots</a>
+        <a href="#features">Features</a>
+        <a href="#privacy">Privacy</a>
+        <a href="/app-ads.txt" target="_blank">app-ads.txt</a>
+        <a href="/api-docs" class="nav-btn">API Docs</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="hero">
+    <div class="pill-badge">
+      <span>🚀 Version 1.2.1 Live</span>
+    </div>
+    <h1>
+      Workforce &amp; Attendance,<br />
+      <span class="gradient-text">Intelligently Reimagined.</span>
+    </h1>
+    <p>
+      WorkPay by SANGHARSH GROUP streamlines employee attendance, geofenced office clock-ins,
+      leave approvals, and salary transparency into one unified mobile and cloud platform.
+    </p>
+
+    <div class="cta-group">
+      <a href="https://play.google.com/store/apps/details?id=com.chiranjeebnayak.workPayApp" target="_blank" rel="noopener noreferrer" class="btn-primary">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M3.609 1.814L13.793 12 3.61 22.186a2.122 2.122 0 0 1-.22-.962V2.776c0-.36.08-.696.22-.962zm11.24 11.24L4.85 23.053c.48.243 1.05.27 1.58-.027l11.45-6.527-3.03-3.445zm3.72-2.12l2.67 1.523c1.01.576 1.01 1.516 0 2.092l-2.67 1.524-2.61-2.57 2.61-2.57zm-3.72-2.12l3.03-3.446L6.43.844c-.53-.298-1.1-.27-1.58-.027l10.001 10.001z"/>
+        </svg>
+        Download on Google Play
+      </a>
+      <a href="/api-docs" class="btn-secondary">
+        <span>Swagger API Docs</span>
+        <span>→</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- Feature Graphic Showcase Banner -->
+  <div class="feature-banner-wrapper">
+    <div class="feature-banner-card">
+      <img src="/feature_graphic.jpg" alt="WorkPay Official Feature Banner" class="feature-banner-img" />
+    </div>
+  </div>
+
+  <!-- Real App UI Screenshots Showcase -->
+  <section id="screens" class="screenshots-section">
+    <div class="section-header">
+      <h2>Live Mobile Experience</h2>
+      <p>Captured directly from the active WorkPay Android client</p>
+    </div>
+
+    <div class="screens-container">
+      <div class="phone-mockup">
+        <div class="phone-screen">
+          <img src="/ui_login_clean.png" alt="WorkPay Employee Sign In" />
+        </div>
+        <div class="phone-caption">
+          <h4>Employee Access</h4>
+          <p>Instant phone login, office status, and secure attendance verification.</p>
+        </div>
+      </div>
+
+      <div class="phone-mockup">
+        <div class="phone-screen">
+          <img src="/ui_login_admin.png" alt="WorkPay Admin Sign In" />
+        </div>
+        <div class="phone-caption">
+          <h4>Administrator Portal</h4>
+          <p>Office management, geofence radius tuning, and staff records.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features Grid -->
+  <section id="features" class="features-section">
+    <div class="section-header">
+      <h2>Engineered for Teams &amp; Organizations</h2>
+      <p>Precision tools built for employees on mobile and administrators on the web.</p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-icon">📍</div>
+        <h3>Geofenced GPS Attendance</h3>
+        <p>Ensures clock-in and clock-out occur strictly within designated office premises with sub-meter location verification.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">💳</div>
+        <h3>Salary &amp; Advance Tracking</h3>
+        <p>Real-time calculation of daily earnings, overtime rates, deductions, and salary advances with clear pay history.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">🌴</div>
+        <h3>Leave Balance Management</h3>
+        <p>Seamless leave application with automated balance decrements, admin approval workflows, and status alerts.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">🛡️</div>
+        <h3>AdMob &amp; Security Compliance</h3>
+        <p>Strict session tokens with SecureStore encryption, device-level integrity, and compliant publisher monetization.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- AdMob Verification Banner -->
+  <section class="admob-banner">
+    <div class="banner-box">
+      <div class="banner-text">
+        <h3>Google AdMob &amp; IAB Verified Inventory</h3>
+        <p>Publisher ID: <span class="tag-badge">pub-5483665722366697</span> | Direct Authorization</p>
+      </div>
+      <div>
+        <a href="/app-ads.txt" target="_blank" class="btn-secondary">
+          View app-ads.txt
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Privacy Policy Section -->
+  <section id="privacy" class="policy-section">
+    <h2>Privacy Policy &amp; Terms of Service</h2>
+    <p>Last updated: October 2026</p>
+
+    <h3>1. Information We Collect</h3>
+    <p>WorkPay collects information necessary to provide attendance and payroll services:</p>
+    <ul>
+      <li><strong>Location Data:</strong> We require precise location access (GPS) while using the app strictly to verify presence within the office radius during clock-in and clock-out. Location data is not tracked continuously in the background.</li>
+      <li><strong>Account Credentials:</strong> Name, work email, phone number, and encrypted passwords.</li>
+      <li><strong>Device Identifiers &amp; Advertising IDs:</strong> Used in compliance with Google Play Developer policies and Google AdMob for personalized or non-personalized advertisements.</li>
+    </ul>
+
+    <h3>2. How We Use Information</h3>
+    <p>We use your data solely to calculate employee attendance, record approved leaves, compute monthly salary transactions, and maintain account security.</p>
+
+    <h3>3. Data Protection</h3>
+    <p>All network traffic is encrypted over TLS (HTTPS). Sensitive tokens and keys are stored in secure hardware-backed storage (Android Keystore / iOS Keychain).</p>
+
+    <h3>4. Contact Us</h3>
+    <p>For inquiries, support, or data deletion requests, contact the WorkPay developer team at support@workpay.com or via your administrator.</p>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-container">
+      <p>&copy; 2026 WorkPay by SANGHARSH GROUP (com.chiranjeebnayak.workPayApp). All rights reserved.</p>
+      <div class="footer-links">
+        <a href="/app-ads.txt">app-ads.txt</a>
+        <a href="#privacy">Privacy Policy</a>
+        <a href="/api-docs">API Documentation</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

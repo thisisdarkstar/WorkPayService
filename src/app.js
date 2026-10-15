@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
 import adminRoutes from "./routes/adminRoutes.js";
 import officeRoutes from "./routes/officeRoutes.js";
 import employeeRoutes from "./routes/employeeRoutes.js";
@@ -7,6 +9,12 @@ import attendanceRoutes from "./routes/attendanceRoute.js";
 import leaveRoutes from "./routes/leaveRoutes.js";
 import transactionRouter from "./routes/transactionRoutes.js"
 import holidayRoutes from "./routes/holidayRoutes.js";
+import versionRoutes from "./routes/versionRoutes.js";
+import { requireSupportedAppVersion } from "./Middleware/versionCheckMiddleware.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDir = path.join(__dirname, "../public");
 
 // imports for logging
 import logger from "./utils/logger.js"
@@ -71,7 +79,15 @@ app.use(
       return callback(null, false);
     },
     methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-super-admin-key", "x-cron-secret", "x-transaction-id"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "x-super-admin-key",
+      "x-cron-secret",
+      "x-transaction-id",
+      "x-app-version-code",
+      "x-app-platform",
+    ],
   })
 );
 
@@ -124,23 +140,50 @@ app.use("/api/employees/login", authLimiter);
 app.use("/api/admins/reset-password-phone", authLimiter);
 app.use("/api/employees/reset-password", authLimiter);
 
+// 🛡️ Serve public static assets (landing page, images, icons, app-ads.txt)
+app.use(express.static(publicDir));
+
 // Swagger Documentation UI
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
+// Product Landing Page (serves HTML for browser hits, JSON for direct API inspection)
 app.get("/", (req, res) => {
-  const responsePayload = {
+  if (req.accepts("html")) {
+    return res.sendFile(path.join(publicDir, "index.html"), (err) => {
+      if (err) {
+        return res.json({
+          name: "WorkPay API",
+          version: "1.0.1",
+          message: "Welcome to the WorkPay API",
+          docs: "/api-docs",
+        });
+      }
+    });
+  }
+  return res.json({
+    name: "WorkPay API",
     version: "1.0.1",
     message: "Welcome to the WorkPay API",
     docs: "/api-docs",
-  };
-  res.send(responsePayload);
+  });
 });
 
 // Authorized Digital Sellers for Mobile Apps (IAB Tech Lab standard for Google AdMob)
 app.get("/app-ads.txt", (req, res) => {
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.status(200).send("google.com, pub-5483665722366697, DIRECT, f08c47fec0942fa0\n");
+  res.sendFile(path.join(publicDir, "app-ads.txt"), (err) => {
+    if (err) {
+      // Safe inline fallback if file stream encounters any issues
+      res.status(200).send("google.com, pub-5483665722366697, DIRECT, f08c47fec0942fa0\n");
+    }
+  });
 });
+
+// Mobile App Version Policy API (unrestricted so clients can check requirements)
+app.use("/api", versionRoutes);
+
+// Enforce minimum supported app version on remaining API endpoints
+app.use("/api", requireSupportedAppVersion);
 
 app.use("/api/admins", adminRoutes);
 app.use("/api/offices", officeRoutes);
